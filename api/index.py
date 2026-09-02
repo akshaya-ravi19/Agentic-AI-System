@@ -263,3 +263,11 @@ def index():
     </body>
     </html>
     """
+
+# ASGI Handler for Vercel Serverless Function execution
+try:
+    from mangum import Mangum
+    handler = Mangum(app)
+except ImportError:
+    handler = app
+
