@@ -1,8 +1,8 @@
-# FoodGuard — Agentic AI Food Safety Triage System
+<<<<<<< HEAD
+# Agentic AI Food Safety Triage System
 MSc Dissertation · Data Science & Artificial Intelligence
 
 ## What this project does
-FoodGuard is an agentic AI pipeline that:
 1. Classifies NYC 311 food safety complaints as severe / non-severe (BiLSTM)
 2. Retrieves evidence from DOHMH inspection records (LangGraph agent tools)
 3. Detects spatiotemporal outbreak patterns (HDBSCAN — 5 dimensions)
@@ -95,3 +95,6 @@ sample agent outputs, as part of the evaluation chapter.
 ## Key rule
 NEVER apply SMOTE or any balancing to validation or test data.
 Training fold only. Split first, balance second.
+=======
+# Agentic-AI-System
+>>>>>>> cc7f66d8ea549713229f199fc3018f1fa292e9d7

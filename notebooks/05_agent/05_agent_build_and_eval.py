@@ -209,4 +209,3 @@ print("""
 
 4. Delta(agent_kappa - rule_kappa) = what the agent adds over simple rules
 """)
-print("Next: notebooks/06_clustering/")

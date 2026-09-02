@@ -1,10 +1,5 @@
 # ============================================================
-# NOTEBOOK 00 — Environment Check & Data Download
-# RUN THIS FIRST before opening any other notebook.
-# ============================================================
-# HOW TO USE:
-# Option A (Jupyter): jupyter notebook, open this file
-# Option B (script):  python 00_environment_and_data_download.py
+# NOTEBOOK 0 — Environment Check & Data Download
 # ============================================================
 
 import sys, requests, json

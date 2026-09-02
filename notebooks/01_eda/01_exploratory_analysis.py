@@ -51,4 +51,4 @@ for col in ["camis","inspection_date","critical_flag","grade"]:
     if col in df_dohmh.columns:
         print(f"  DOHMH {col}: {df_dohmh[col].isna().sum():,} missing")
 
-print("\nEDA complete. Next: notebooks/03_labelling/")
+print("\nEDA complete.")

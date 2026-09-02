@@ -171,4 +171,3 @@ for _, row in df_w[df_w["cluster_id"]>=0].iterrows():
 map_path = EVAL_DIR/"clustering"/"cluster_map.html"
 m.save(str(map_path))
 print(f"\nMap saved → open {map_path} in your browser")
-print("Next: notebooks/07_evaluation/")

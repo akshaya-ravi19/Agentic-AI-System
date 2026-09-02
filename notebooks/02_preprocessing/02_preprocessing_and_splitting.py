@@ -1,7 +1,5 @@
 # ============================================================
 # NOTEBOOK 02 — Preprocessing, Embedding, Splitting, Balancing
-# Run AFTER notebook 03 (needs labelled_complaints.csv).
-# CRITICAL RULE: Split FIRST, balance training fold ONLY.
 # ============================================================
 import pandas as pd, numpy as np, re, spacy, nltk
 from sentence_transformers import SentenceTransformer

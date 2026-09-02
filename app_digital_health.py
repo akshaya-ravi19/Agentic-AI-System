@@ -1,27 +1,27 @@
 """
-app_unified.py
---------------
-Unified, self-contained Cloud Run application for FoodGuard:
-1. In-process BiLSTM classifier (SentenceTransformer + Keras).
-2. BigQuery-backed evidence tools (Inspection history, recent complaints, cluster context).
-3. LangGraph ReAct Agent powered by Google Gemini.
-4. Deterministic Rule-Based Fallback logic.
-5. Interactive Web UI & REST API (/health, /predict, /investigate, /).
+app_digital_health.py
+---------------------
+Digital Health & Clinical Syndromic Surveillance Triage Service.
+
+Features:
+1. Digital Health BiLSTM model (SentenceTransformers + Keras bilstm_digital_health.keras)
+2. Clinical Syndromic Hazard & Priority Pathogen Analysis (CDC FoodNet & FDA Model Code)
+3. BigQuery Epidemiological Evidence & 5D HDBSCAN Outbreak Context
+4. Gemini ReAct Clinical Decision Support Agent
+5. Dedicated Digital Public Health Dashboard & REST API
 """
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional, List
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import numpy as np
 
-# Ensure root config is available
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
@@ -35,67 +35,47 @@ from config.config import (
     TRIAGE_ESCALATE,
     BQ_INSPECTIONS,
     BQ_CLUSTERS,
-    BQ_COMPLAINTS_LABELLED,
-    BQ_AGENT_DECISIONS,
-    BQ_ESCALATIONS,
+    BQ_COMPLAINTS_LABELLED
 )
 from pipeline.routing.rule_based_triage import rule_based_triage
 
-# ── Globals ───────────────────────────────────────────────────
 embedder = None
 classifier_model = None
 model_loading_error = None
 models_ready = False
 
-MODEL_FILE = os.environ.get("MODEL_FILE", "bilstm_classweight.keras")
+MODEL_FILE = "bilstm_digital_health.keras"
 MODEL_PATH = MODELS_DIR / "bilstm" / MODEL_FILE
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 
-_model_lock = threading.Event()   # set when models are ready or failed
 
-
-def _load_models_sync():
-    """Load models synchronously in a background thread with explicit flush logging."""
+def _load_digital_health_models():
     global embedder, classifier_model, models_ready, model_loading_error
     try:
-        print("[FoodGuard] Step 1/2: Loading sentence-transformer...", flush=True)
+        print(f"[DigitalHealth] Loading SentenceTransformer: {EMBEDDING_MODEL}", flush=True)
         from sentence_transformers import SentenceTransformer
         embedder = SentenceTransformer(EMBEDDING_MODEL)
-        print(f"[FoodGuard] SentenceTransformer ready ({EMBEDDING_MODEL}).", flush=True)
 
-        print(f"[FoodGuard] Step 2/2: Loading Keras model ({MODEL_FILE})...", flush=True)
+        print(f"[DigitalHealth] Loading BiLSTM model: {MODEL_PATH}", flush=True)
         import tensorflow as tf
         if not MODEL_PATH.exists():
-            raise FileNotFoundError(
-                f"Model file not found at {MODEL_PATH}. "
-                "Ensure models/bilstm/ was COPY'd into the Docker image."
-            )
+            raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
         classifier_model = tf.keras.models.load_model(str(MODEL_PATH))
         models_ready = True
-        print("[FoodGuard] All models loaded — /predict and /investigate are live.", flush=True)
-    except Exception as exc:
-        model_loading_error = str(exc)
-        print(f"[FoodGuard] FATAL model load error: {exc}", flush=True)
-    finally:
-        _model_lock.set()   # signal that loading (success or failure) is done
+        print("[DigitalHealth] All models successfully loaded into memory.", flush=True)
+    except Exception as e:
+        model_loading_error = str(e)
+        print(f"[DigitalHealth] Error loading models: {e}", flush=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    FastAPI lifespan: spawn model loader thread immediately so the port
-    binds fast (Cloud Run TCP probe passes in ~2 s), then yield.
-    CPU is always-allocated on this revision so the background thread
-    is never throttled while models are loading.
-    """
-    t = threading.Thread(target=_load_models_sync, daemon=True, name="model-loader")
+    t = threading.Thread(target=_load_digital_health_models, daemon=True)
     t.start()
     yield
-    # shutdown — nothing to clean up
 
 
-app = FastAPI(title="FoodGuard - Unified Food Safety AI Triage", lifespan=lifespan)
-
+app = FastAPI(title="Digital Health Syndromic Triage Platform", lifespan=lifespan)
 
 # ── BigQuery Tool Helpers ─────────────────────────────────────
 _bq_client = None
@@ -200,7 +180,7 @@ def get_agent():
 
         @tool
         def tool_inspection_history(camis: str) -> str:
-            """Query official DOHMH past inspection history and grades for an establishment."""
+            """Query DOHMH historical violation records and inspection grades."""
             import json
             return json.dumps(get_inspection_history(camis), default=str)
 
@@ -224,81 +204,42 @@ def get_agent():
         )
         tools = [tool_inspection_history, tool_recent_complaints, tool_cluster_context]
         system_prompt = (
-            "You are FoodGuard, an AI decision support assistant for Environmental Health Officers.\n"
-            "Analyze the complaint severity, retrieve inspection history and cluster context, and recommend a triage level:\n"
-            "- LOG: Minor issue, record for next routine inspection.\n"
-            "- REVIEW: Secondary risk or repeat complaints, review within 5 business days.\n"
-            "- ESCALATE: Critical illness, severe pest infestation, or active outbreak; prioritize for immediate inspection within 48h.\n"
-            "Always state your reasoning clearly tied to the evidence. You only recommend; human officers make regulatory decisions."
+            "You are a Digital Public Health & Environmental Epidemiological Decision Support Agent.\n"
+            "Evaluate citizen syndromic hazard complaints, investigate historical establishment inspection records and outbreak cluster evidence, "
+            "and assign an actionable Public Health Priority Triage Level:\n"
+            "- LOG: Minor administrative or non-pathogenic issue (Routine inspection tracking).\n"
+            "- REVIEW: Secondary syndromic risk, repeat complaints, or hygiene hazards (Review within 5 business days).\n"
+            "- ESCALATE: Acute foodborne illness, severe biological contamination (vermin/sewage), or active outbreak cluster (Immediate priority inspection within 48h).\n"
+            "Provide clinical syndromic justification and risk reasoning tied directly to evidence."
         )
         _agent = create_react_agent(llm, tools, prompt=system_prompt)
     return _agent
 
 
-# ── Request / Response Schemas ─────────────────────────────────
-class PredictRequest(BaseModel):
-    text: str
-
-class PredictResponse(BaseModel):
-    severity_score: float
-    severity_label: int
-    model: str
-
 class InvestigateRequest(BaseModel):
-    complaint_id: Optional[str] = "COMP-DEMO"
+    complaint_id: Optional[str] = "SYNDROMIC-DEMO"
     camis: Optional[str] = None
     restaurant_name: Optional[str] = None
     location: Optional[str] = None
     text: str
 
-class InvestigateResponse(BaseModel):
-    complaint_id: str
-    camis: Optional[str]
-    restaurant_name: Optional[str] = None
-    location: Optional[str] = None
-    severity_score: float
-    severity_label: int
-    triage_level: str
-    reasoning: str
-    evidence: dict
-    used_rule_based_fallback: bool
 
-
-# ── REST API Endpoints ────────────────────────────────────────
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "models_ready": models_ready,
         "model_file": MODEL_FILE,
-        "error": model_loading_error
+        "framework": "Digital Health Syndromic Surveillance"
     }
 
 
-@app.post("/predict", response_model=PredictResponse)
-def predict(req: PredictRequest):
-    if not models_ready:
-        raise HTTPException(status_code=503, detail="Models are still initializing. Please retry in 10 seconds.")
-    if not req.text.strip():
-        raise HTTPException(status_code=400, detail="Empty complaint text provided.")
-
-    embedding = embedder.encode([req.text]).reshape(1, 1, -1)
-    score = float(classifier_model.predict(embedding, verbose=0)[0][0])
-    label = int(score >= 0.5)
-
-    return PredictResponse(
-        severity_score=round(score, 4),
-        severity_label=label,
-        model=MODEL_FILE
-    )
-
-
-@app.post("/investigate", response_model=InvestigateResponse)
+@app.post("/investigate")
 def investigate(req: InvestigateRequest):
     if not models_ready:
         raise HTTPException(status_code=503, detail="Models are still initializing.")
 
-    # 1. Classify
+    # 1. Embed & Predict Hazard
     embedding = embedder.encode([req.text]).reshape(1, 1, -1)
     score = float(classifier_model.predict(embedding, verbose=0)[0][0])
     label = int(score >= 0.5)
@@ -327,9 +268,9 @@ def investigate(req: InvestigateRequest):
         est_str = ", ".join(est_desc) if est_desc else "Establishment=Unspecified"
 
         user_msg = (
-            f"Complaint regarding establishment ({est_str}): {req.text}\n"
-            f"BiLSTM severity score: {score:.3f} (Label={label}).\n"
-            f"Please investigate using your tools and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
+            f"Citizen complaint ({est_str}): {req.text}\n"
+            f"Digital Health Syndromic Hazard Score: {score:.3f} (Class={label}).\n"
+            f"Please conduct an epidemiological investigation and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
         )
         res = agent.invoke({"messages": [{"role": "user", "content": user_msg}]})
         raw_msg = res["messages"][-1].content
@@ -357,22 +298,19 @@ def investigate(req: InvestigateRequest):
             days_since_inspection=999,
             complaint_count_30d=count
         )
-        if not reasoning:
-            reasoning = f"Rule-based policy assigned {tier} based on severity score {score:.3f} and grade '{last_grade}'."
 
-    return InvestigateResponse(
-        complaint_id=req.complaint_id or "COMP-DEMO",
-        camis=req.camis,
-        severity_score=round(score, 4),
-        severity_label=label,
-        triage_level=tier,
-        reasoning=reasoning,
-        evidence=evidence_data,
-        used_rule_based_fallback=used_fallback
-    )
+    return {
+        "complaint_id": req.complaint_id,
+        "camis": req.camis,
+        "syndromic_score": round(score, 4),
+        "hazard_flag": "ACTIONABLE HAZARD" if label == 1 else "ROUTINE / ADMINISTRATIVE",
+        "triage_level": tier,
+        "epidemiological_reasoning": reasoning,
+        "evidence": evidence_data,
+        "used_rule_based_fallback": used_fallback
+    }
 
 
-# ── Interactive Web UI ────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 def index():
     return """
@@ -381,77 +319,78 @@ def index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Food Safety Event Detection & Risk Scoring System</title>
+        <title>Digital Health Syndromic Surveillance Platform</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
-            body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-            .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+            body { background-color: #0b132b; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+            .card { background-color: #1c2541; border: 1px solid #3a506b; border-radius: 12px; }
             .badge-LOG { background-color: #10b981; }
             .badge-REVIEW { background-color: #f59e0b; color: #000; }
             .badge-ESCALATE { background-color: #ef4444; }
-            .btn-primary { background-color: #3b82f6; border-color: #3b82f6; }
-            .section-title { color: #38bdf8; font-weight: 700; border-bottom: 2px solid #0284c7; padding-bottom: 8px; display: inline-block; }
-            pre { background-color: #090d16; padding: 15px; border-radius: 8px; color: #38bdf8; white-space: pre-wrap; }
+            .btn-primary { background-color: #00b4d8; border-color: #00b4d8; color: #03045e; font-weight: 700; }
+            .btn-primary:hover { background-color: #90e0ef; border-color: #90e0ef; color: #03045e; }
+            .section-title { color: #48cae4; font-weight: 700; border-bottom: 2px solid #0096c7; padding-bottom: 8px; display: inline-block; }
+            pre { background-color: #070d1e; padding: 15px; border-radius: 8px; color: #90e0ef; white-space: pre-wrap; border: 1px solid #1f3160; }
         </style>
     </head>
     <body class="py-5">
-        <div class="container" style="max-width: 900px;">
+        <div class="container" style="max-width: 950px;">
             <div class="text-center mb-4">
-                <h2 class="fw-bold text-light">🍽️ Food Safety Event Detection & Risk Scoring</h2>
-                <p class="text-secondary mb-1">Real-Time Complaint Classification & Autonomous Decision Support System</p>
-                <span class="badge bg-primary bg-opacity-25 text-info border border-info border-opacity-25 px-3 py-1">Cloud Run Active</span>
+                <h2 class="fw-bold text-light">🩺 Digital Health Syndromic Surveillance & Triage</h2>
+                <p class="text-secondary mb-1">Computational Public Health Intelligence · Early Outbreak Detection · Environmental Health CDSS</p>
+                <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 px-3 py-1">CDC FoodNet & FDA Model Code Aligned</span>
             </div>
 
             <div class="card p-4 shadow-sm mb-4">
                 <div class="mb-3">
-                    <h5 class="section-title mb-0">Submit Food Safety Complaint for Triage</h5>
+                    <h5 class="section-title mb-0">Submit Syndromic Complaint for Public Health Triage</h5>
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label text-secondary fw-semibold">Complaint Text <span class="text-danger">*</span></label>
-                    <textarea id="complaintText" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="e.g. Severe vomiting and fever after eating raw tuna roll, saw live cockroaches behind counter."></textarea>
+                    <label class="form-label text-secondary fw-semibold">Complaint / Symptom Description <span class="text-danger">*</span></label>
+                    <textarea id="complaintText" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="e.g. Acute onset of vomiting, high fever, and severe abdominal cramps after consuming undercooked seafood. Saw live cockroaches on kitchen cutting boards."></textarea>
                 </div>
 
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
-                        <label class="form-label text-secondary fw-semibold">CAMIS ID <span class="text-muted fw-normal">(Optional)</span></label>
+                        <label class="form-label text-secondary fw-semibold">Establishment ID (CAMIS) <span class="text-muted fw-normal">(Optional)</span></label>
                         <input type="text" id="camisInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. 50002628">
                     </div>
                     <div class="col-md-4">
                         <label class="form-label text-secondary fw-semibold">Restaurant Name <span class="text-muted fw-normal">(Optional)</span></label>
-                        <input type="text" id="restaurantNameInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. Golden Dragon Sushi">
+                        <input type="text" id="restaurantNameInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. Ocean Blue Seafood">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label text-secondary fw-semibold">Street / Location <span class="text-muted fw-normal">(Optional)</span></label>
-                        <input type="text" id="locationInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. 350 5th Ave, Brooklyn">
+                        <label class="form-label text-secondary fw-semibold">Location / Address <span class="text-muted fw-normal">(Optional)</span></label>
+                        <input type="text" id="locationInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. 420 Lexington Ave, Manhattan">
                     </div>
                 </div>
 
-                <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fw-semibold" id="btnSubmit">
-                    Execute Agentic Triage
+                <button onclick="runTriage()" class="btn btn-primary w-100 py-2" id="btnSubmit">
+                    Execute Digital Health Triage
                 </button>
             </div>
 
             <div id="resultsCard" class="card p-4 shadow-sm d-none mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0 text-light">Triage Assessment</h5>
+                    <h5 class="mb-0 text-light">Epidemiological Triage Assessment</h5>
                     <span id="triageBadge" class="badge fs-6 px-3 py-2"></span>
                 </div>
                 <div class="row text-center mb-3">
                     <div class="col-md-6 mb-2">
                         <div class="p-3 bg-dark rounded border border-secondary">
-                            <small class="text-secondary d-block">BiLSTM Severity Score</small>
+                            <small class="text-secondary d-block">Syndromic Hazard Score</small>
                             <h3 id="severityScore" class="fw-bold mb-0 text-info"></h3>
                         </div>
                     </div>
                     <div class="col-md-6 mb-2">
                         <div class="p-3 bg-dark rounded border border-secondary">
-                            <small class="text-secondary d-block">Predicted Severity Flag</small>
+                            <small class="text-secondary d-block">Public Health Hazard Flag</small>
                             <h3 id="severityLabel" class="fw-bold mb-0"></h3>
                         </div>
                     </div>
                 </div>
-                <h6 class="text-secondary">AI Agent Reasoning & Directives</h6>
+                <h6 class="text-secondary">Epidemiological Decision Reasoning & Clinical Context</h6>
                 <pre id="agentReasoning"></pre>
             </div>
         </div>
@@ -465,10 +404,10 @@ def index():
                 const btn = document.getElementById('btnSubmit');
                 const resultsCard = document.getElementById('resultsCard');
 
-                if (!text) { alert('Please enter complaint text.'); return; }
+                if (!text) { alert('Please enter symptom / complaint details.'); return; }
 
                 btn.disabled = true;
-                btn.innerText = 'Analyzing in GCP Cloud Run...';
+                btn.innerText = 'Analyzing Syndromic Indicators...';
                 resultsCard.classList.add('d-none');
 
                 try {
@@ -485,25 +424,25 @@ def index():
                     const data = await resp.json();
 
                     if (!resp.ok) {
-                        alert(data.detail || 'Error processing complaint.');
+                        alert(data.detail || 'Error processing request.');
                         return;
                     }
 
-                    document.getElementById('severityScore').innerText = data.severity_score;
-                    document.getElementById('severityLabel').innerText = data.severity_label === 1 ? 'SEVERE ⚠️' : 'NON-SEVERE';
-                    document.getElementById('severityLabel').className = 'fw-bold mb-0 ' + (data.severity_label === 1 ? 'text-danger' : 'text-success');
+                    document.getElementById('severityScore').innerText = data.syndromic_score;
+                    document.getElementById('severityLabel').innerText = data.hazard_flag;
+                    document.getElementById('severityLabel').className = 'fw-bold mb-0 ' + (data.hazard_flag.includes('ACTIONABLE') ? 'text-danger' : 'text-success');
 
                     const badge = document.getElementById('triageBadge');
                     badge.innerText = data.triage_level;
                     badge.className = 'badge fs-6 px-3 py-2 badge-' + data.triage_level;
 
-                    document.getElementById('agentReasoning').innerText = data.reasoning;
+                    document.getElementById('agentReasoning').innerText = data.epidemiological_reasoning;
                     resultsCard.classList.remove('d-none');
                 } catch (e) {
                     alert('Request failed: ' + e);
                 } finally {
                     btn.disabled = false;
-                    btn.innerText = 'Execute Agentic Triage';
+                    btn.innerText = 'Execute Digital Health Triage';
                 }
             }
         </script>

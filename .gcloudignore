@@ -1,0 +1,11 @@
+.gcloudignore
+.git
+.gitignore
+.venv/
+venv/
+data/raw/
+data/processed/
+data/splits/
+*.log
+__pycache__/
+*.pyc

@@ -1,6 +1,5 @@
 # ============================================================
 # NOTEBOOK 07 — Full Evaluation and Ablation Study
-# Produces all tables and figures for Chapter 5.
 # ============================================================
 import pandas as pd, numpy as np, json
 from sklearn.metrics import cohen_kappa_score, f1_score, classification_report
@@ -202,4 +201,3 @@ summary = {
 pd.DataFrame([summary]).to_csv(EVAL_DIR/"final_results_summary.csv", index=False)
 print(f"Saved → {EVAL_DIR}/final_results_summary.csv")
 print("\nEvaluation complete")
-print("Then move to pipeline/ for GCP deployment.")
