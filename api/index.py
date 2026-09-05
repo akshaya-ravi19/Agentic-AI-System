@@ -118,44 +118,207 @@ def index():
         <title>Digital Health Syndromic Surveillance Platform</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
-            body { background-color: #0b132b; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-            .card { background-color: #1c2541; border: 1px solid #3a506b; border-radius: 12px; }
-            .badge-LOG { background-color: #10b981; }
-            .badge-REVIEW { background-color: #f59e0b; color: #000; }
-            .badge-ESCALATE { background-color: #ef4444; }
-            .btn-primary { background-color: #00b4d8; border-color: #00b4d8; color: #03045e; font-weight: 700; }
-            .btn-primary:hover { background-color: #90e0ef; border-color: #90e0ef; color: #03045e; }
-            .section-title { color: #48cae4; font-weight: 700; border-bottom: 2px solid #0096c7; padding-bottom: 8px; display: inline-block; }
+            :root {
+                --bg-primary: #070e1e;
+                --bg-card: #121c33;
+                --bg-inner: #0b1426;
+                --border-color: #233554;
+                --accent-cyan: #38bdf8;
+                --accent-blue: #0284c7;
+                --text-light: #f8fafc;
+                --text-muted: #94a3b8;
+                --text-subtle: #64748b;
+            }
+            body { 
+                background-color: var(--bg-primary); 
+                color: var(--text-light); 
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                min-height: 100vh;
+            }
+            .card { 
+                background-color: var(--bg-card); 
+                border: 1px solid var(--border-color); 
+                border-radius: 14px; 
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+            }
+            .badge-LOG { background-color: #10b981; color: #ffffff; font-weight: 700; letter-spacing: 0.5px; }
+            .badge-REVIEW { background-color: #f59e0b; color: #1e1b4b; font-weight: 700; letter-spacing: 0.5px; }
+            .badge-ESCALATE { background-color: #ef4444; color: #ffffff; font-weight: 700; letter-spacing: 0.5px; }
             
-            /* Enhanced Assessment Styling without markdown hashes/asterisks */
-            .assessment-section { background-color: #0d1b2a; border-radius: 10px; padding: 20px; border: 1px solid #283e58; }
-            .assessment-header { font-size: 1.15rem; font-weight: 600; color: #38bdf8; border-bottom: 1px solid #1e3a5f; padding-bottom: 8px; margin-bottom: 16px; }
-            .item-row { display: flex; margin-bottom: 10px; font-size: 0.95rem; }
-            .item-label { color: #94a3b8; width: 220px; flex-shrink: 0; font-weight: 600; }
-            .item-value { color: #f1f5f9; flex-grow: 1; }
-            .highlight-box { background: rgba(56, 189, 248, 0.08); border-left: 4px solid #38bdf8; padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 14px; }
-            .highlight-box.critical { background: rgba(239, 68, 68, 0.1); border-left-color: #ef4444; }
-            .highlight-box.review { background: rgba(245, 158, 11, 0.1); border-left-color: #f59e0b; }
-            .highlight-box.log { background: rgba(16, 185, 129, 0.1); border-left-color: #10b981; }
+            .btn-primary { 
+                background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+                border: none;
+                color: #041329; 
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                transition: all 0.2s ease-in-out;
+            }
+            .btn-primary:hover { 
+                background: linear-gradient(135deg, #38bdf8 0%, #7dd3fc 100%);
+                color: #041329;
+                transform: translateY(-1px);
+                box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
+            }
+            .btn-outline-secondary {
+                border-color: var(--border-color);
+                color: var(--text-muted);
+                transition: all 0.2s ease;
+            }
+            .btn-outline-secondary:hover {
+                background-color: #1e293b;
+                color: var(--text-light);
+                border-color: #475569;
+            }
+            .section-title { 
+                color: var(--accent-cyan); 
+                font-weight: 700; 
+                border-bottom: 2px solid var(--accent-blue); 
+                padding-bottom: 6px; 
+                display: inline-block; 
+            }
+            
+            /* Quick Category Chips */
+            .quick-tag {
+                cursor: pointer;
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                color: #cbd5e1;
+                font-size: 0.82rem;
+                padding: 4px 10px;
+                border-radius: 20px;
+                display: inline-block;
+                margin: 2px;
+                transition: all 0.15s ease;
+                user-select: none;
+            }
+            .quick-tag:hover {
+                background-color: #0284c7;
+                color: #ffffff;
+                border-color: #38bdf8;
+                transform: translateY(-1px);
+            }
+
+            /* Metric Stat Cards */
+            .metric-box {
+                background-color: var(--bg-inner);
+                border-radius: 10px;
+                border: 1px solid var(--border-color);
+                padding: 16px;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+
+            /* Enhanced Assessment Styling */
+            .assessment-section { 
+                background-color: var(--bg-inner); 
+                border-radius: 12px; 
+                padding: 22px; 
+                border: 1px solid var(--border-color); 
+            }
+            .assessment-header { 
+                font-size: 1.05rem; 
+                font-weight: 700; 
+                color: var(--accent-cyan); 
+                border-bottom: 1px solid #1e3a5f; 
+                padding-bottom: 8px; 
+                margin-bottom: 14px; 
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+            }
+            .item-row { 
+                display: flex; 
+                margin-bottom: 10px; 
+                font-size: 0.95rem; 
+                align-items: baseline;
+            }
+            .item-label { 
+                color: var(--text-muted); 
+                width: 210px; 
+                flex-shrink: 0; 
+                font-weight: 600; 
+            }
+            .item-value { 
+                color: var(--text-light); 
+                flex-grow: 1; 
+            }
+            
+            /* Action Directives Callout with High Contrast & Readability */
+            .highlight-box { 
+                background: #0f2038; 
+                border-left: 5px solid var(--accent-cyan); 
+                padding: 16px 20px; 
+                border-radius: 0 10px 10px 0; 
+                margin-top: 16px; 
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            }
+            .highlight-box.critical { 
+                background: #2a111a; 
+                border-left-color: #ef4444; 
+            }
+            .highlight-box.review { 
+                background: #2a1f10; 
+                border-left-color: #f59e0b; 
+            }
+            .highlight-box.log { 
+                background: #0d281e; 
+                border-left-color: #10b981; 
+            }
+            
+            /* High-visibility colored directive text */
+            .directive-text {
+                font-size: 1.02rem;
+                line-height: 1.55;
+                font-weight: 500;
+            }
+            .highlight-box.critical .directive-text {
+                color: #fca5a5 !important; /* Soft bright red, crystal clear on dark */
+            }
+            .highlight-box.review .directive-text {
+                color: #fde68a !important; /* Warm golden amber */
+            }
+            .highlight-box.log .directive-text {
+                color: #a7f3d0 !important; /* Crisp mint green */
+            }
+            .highlight-box-title {
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-weight: 700;
+                margin-bottom: 6px;
+                display: block;
+            }
+            .highlight-box.critical .highlight-box-title { color: #f87171; }
+            .highlight-box.review .highlight-box-title { color: #fbbf24; }
+            .highlight-box.log .highlight-box-title { color: #34d399; }
         </style>
     </head>
     <body class="py-5">
         <div class="container" style="max-width: 950px;">
+            <!-- Header -->
             <div class="text-center mb-4">
-                <h2 class="fw-bold text-light">Digital Health Syndromic Surveillance & Triage</h2>
-                <p class="text-secondary mb-1">Computational Public Health Intelligence · Early Outbreak Detection · Environmental Health CDSS</p>
-                <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 px-3 py-1">CDC & FDA Aligned</span>
+                <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance & Triage</h2>
+                <p class="text-secondary mb-2" style="font-size: 0.95rem;">Computational Public Health Intelligence · Early Outbreak Detection · Environmental Health CDSS</p>
+                <div class="d-flex justify-content-center gap-2">
+                    <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 px-3 py-1">CDC FoodNet Aligned</span>
+                    <span class="badge bg-primary bg-opacity-25 text-light border border-primary border-opacity-25 px-3 py-1">FDA Model Food Code</span>
+                    <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25 px-3 py-1">WHO Syndromic Standards</span>
+                </div>
             </div>
 
+            <!-- Complaint Submission Card -->
             <div class="card p-4 shadow-sm mb-4">
-                <div class="mb-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="section-title mb-0">Submit Syndromic Complaint for Public Health Triage</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetForm()">Clear Form</button>
                 </div>
 
+                <!-- Complaint Category Select -->
                 <div class="mb-3">
                     <label class="form-label text-secondary fw-semibold">Complaint Category</label>
                     <select id="categorySelect" class="form-select bg-dark text-light border-secondary">
-                        <option value="">Select an affected category...</option>
+                        <option value="">Select an affected category or click a quick tag below...</option>
                         <optgroup label="Acute Health & Pathogen Symptoms">
                             <option value="Food Poisoning / Acute Illness (Vomiting, Diarrhea, Fever)">Food Poisoning / Acute Illness (Vomiting, Diarrhea, Fever)</option>
                             <option value="Nausea / Stomach Cramps after meal">Nausea / Stomach Cramps after meal</option>
@@ -185,14 +348,26 @@ def index():
                             <option value="General Sanitation Inconvenience">General Sanitation Inconvenience</option>
                         </optgroup>
                     </select>
+
+                    <!-- Quick Symptom Tags -->
+                    <div class="mt-2">
+                        <small class="text-secondary d-block mb-1" style="font-size: 0.8rem;">Common quick selections:</small>
+                        <span class="quick-tag" onclick="selectQuickCategory('Food Poisoning / Acute Illness (Vomiting, Diarrhea, Fever)')">Acute Illness / Food Poisoning</span>
+                        <span class="quick-tag" onclick="selectQuickCategory('Rodents / Mice / Rats Infestation')">Rodent Infestation</span>
+                        <span class="quick-tag" onclick="selectQuickCategory('Food Temperature Abuse / Spoiled Food')">Temperature Abuse / Spoiled</span>
+                        <span class="quick-tag" onclick="selectQuickCategory('Food Contains Foreign Object')">Foreign Object in Food</span>
+                        <span class="quick-tag" onclick="selectQuickCategory('Bare Hands in Contact with Ready-to-Eat Food')">Bare Hand Contact</span>
+                    </div>
                 </div>
                 
+                <!-- Complaint Description -->
                 <div class="mb-3">
                     <label class="form-label text-secondary fw-semibold">Complaint / Symptom Description <span class="text-danger">*</span></label>
-                    <textarea id="complaintText" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="Describe symptoms or observations (e.g., Acute onset of vomiting, high fever, and severe abdominal cramps after consuming seafood)."></textarea>
+                    <textarea id="complaintText" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="Describe symptoms or observations (e.g., Acute onset of vomiting, high fever, and severe abdominal cramps after consuming undercooked seafood)."></textarea>
                 </div>
 
-                <div class="row g-3 mb-3">
+                <!-- Establishment Details -->
+                <div class="row g-3 mb-4">
                     <div class="col-md-6">
                         <label class="form-label text-secondary fw-semibold">Restaurant Name</label>
                         <input type="text" id="restaurantNameInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. Ocean Blue Seafood">
@@ -203,33 +378,36 @@ def index():
                     </div>
                 </div>
 
-                <button onclick="runTriage()" class="btn btn-primary w-100 py-2" id="btnSubmit">
+                <!-- Action Button -->
+                <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
                     Execute Digital Health Triage
                 </button>
             </div>
 
+            <!-- Results Card -->
             <div id="resultsCard" class="card p-4 shadow-sm d-none mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0 text-light">Epidemiological Triage Assessment</h5>
+                    <h5 class="mb-0 text-light fw-bold">Epidemiological Triage Assessment</h5>
                     <span id="triageBadge" class="badge fs-6 px-3 py-2"></span>
                 </div>
                 
-                <div class="row text-center mb-4">
-                    <div class="col-md-6 mb-2">
-                        <div class="p-3 bg-dark rounded border border-secondary">
-                            <small class="text-secondary d-block">Syndromic Hazard Score</small>
+                <!-- Top Summary Metric Cards -->
+                <div class="row text-center mb-4 g-3">
+                    <div class="col-md-6">
+                        <div class="metric-box">
+                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem; letter-spacing: 0.5px;">Syndromic Hazard Score</small>
                             <h3 id="severityScore" class="fw-bold mb-0 text-info"></h3>
                         </div>
                     </div>
-                    <div class="col-md-6 mb-2">
-                        <div class="p-3 bg-dark rounded border border-secondary">
-                            <small class="text-secondary d-block">Public Health Hazard Flag</small>
-                            <h3 id="severityLabel" class="fw-bold mb-0"></h3>
+                    <div class="col-md-6">
+                        <div class="metric-box">
+                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem; letter-spacing: 0.5px;">Public Health Hazard Flag</small>
+                            <h4 id="severityLabel" class="fw-bold mb-0" style="font-size: 1.15rem;"></h4>
                         </div>
                     </div>
                 </div>
 
-                <!-- Clean, formatted assessment without markdown symbols -->
+                <!-- Formatted Assessment Section -->
                 <div class="assessment-section">
                     <div class="assessment-header">Clinical Symptom & Hazard Screening</div>
                     <div class="item-row">
@@ -258,26 +436,44 @@ def index():
                         <div class="item-label">Recommended Triage Tier:</div>
                         <div class="item-value fw-bold" id="displayTier">-</div>
                     </div>
+                    
+                    <!-- Action Directive Container with High-Contrast Text Color -->
                     <div class="highlight-box" id="actionBox">
-                        <span class="fw-bold d-block mb-1 text-light">Action Directives:</span>
-                        <span id="displayAction">-</span>
+                        <span class="highlight-box-title" id="actionTitle">Regulatory Action Directive</span>
+                        <div class="directive-text" id="displayAction">-</div>
                     </div>
 
-                    <div class="text-muted small mt-3">
-                        Note: AI decision support recommendation for public health and environmental clinical officers.
+                    <div class="text-secondary small mt-3" style="font-size: 0.82rem;">
+                        Note: AI decision support recommendation for public health and environmental clinical officers. All inspection dispatches remain subject to regulatory authority confirmation.
                     </div>
                 </div>
             </div>
         </div>
 
         <script>
-            // Autofill complaint text when a category is selected if text is empty
+            // Synchronize category selection with textarea if empty
             document.getElementById('categorySelect').addEventListener('change', function() {
                 const textElem = document.getElementById('complaintText');
                 if (!textElem.value.trim() && this.value) {
                     textElem.value = this.value;
                 }
             });
+
+            function selectQuickCategory(val) {
+                const selectElem = document.getElementById('categorySelect');
+                selectElem.value = val;
+                const textElem = document.getElementById('complaintText');
+                textElem.value = val;
+                textElem.focus();
+            }
+
+            function resetForm() {
+                document.getElementById('categorySelect').value = '';
+                document.getElementById('complaintText').value = '';
+                document.getElementById('restaurantNameInput').value = '';
+                document.getElementById('locationInput').value = '';
+                document.getElementById('resultsCard').classList.add('d-none');
+            }
 
             async function runTriage() {
                 const category = document.getElementById('categorySelect').value.trim();
@@ -314,7 +510,7 @@ def index():
                         return;
                     }
 
-                    document.getElementById('severityScore').innerText = data.syndromic_score;
+                    document.getElementById('severityScore').innerText = data.syndromic_score.toFixed(3);
                     document.getElementById('severityLabel').innerText = data.hazard_flag;
                     document.getElementById('severityLabel').className = 'fw-bold mb-0 ' + (data.hazard_flag.includes('CRITICAL') || data.hazard_flag.includes('MODERATE') ? 'text-danger' : 'text-success');
 
@@ -331,11 +527,22 @@ def index():
                     document.getElementById('displayTier').innerText = data.triage_level;
                     document.getElementById('displayAction').innerText = data.action_directive;
 
-                    // Set highlight box style
+                    // Style the highlight action box
                     const actionBox = document.getElementById('actionBox');
-                    actionBox.className = 'highlight-box ' + (data.triage_level.toLowerCase());
+                    const tierClass = data.triage_level.toLowerCase();
+                    actionBox.className = 'highlight-box ' + tierClass;
+                    
+                    const actionTitle = document.getElementById('actionTitle');
+                    if (tierClass === 'escalate') {
+                        actionTitle.innerText = 'Immediate Regulatory Action Directive (Within 48 Hours)';
+                    } else if (tierClass === 'review') {
+                        actionTitle.innerText = 'Secondary Inspection Directive (Within 5 Business Days)';
+                    } else {
+                        actionTitle.innerText = 'Routine Cycle Directive';
+                    }
 
                     resultsCard.classList.remove('d-none');
+                    resultsCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 } catch (e) {
                     alert('Request failed: ' + e);
                 } finally {
