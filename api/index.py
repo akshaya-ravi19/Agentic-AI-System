@@ -562,7 +562,7 @@ def index():
                     </div>
                     <div class="item-row">
                         <div class="item-label">Surveillance Framework:</div>
-                        <div class="item-value" id="inspectorFramework">CDC FoodNet & FDA Model Food Code (BiLSTM Validated: 88% Recall, 0.9657 PR-AUC)</div>
+                        <div class="item-value" id="inspectorFramework">CDC FoodNet & FDA Model Food Code </div>
                     </div>
 
                     <div class="assessment-header mt-4">Regulatory Enforcement Directives</div>
