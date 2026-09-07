@@ -137,7 +137,10 @@ def investigate(req: InvestigateRequest):
         "safety_advisory": safety_advisory,
         "citizen_next_steps": citizen_next_steps,
         "inspector_directive": inspector_directive,
-        "contact_email": req.contact_email or "Not Provided"
+        # NOTE: contact_email is intentionally NOT included in this response.
+        # It exists only to trigger a citizen-side notification (out of scope for
+        # this demo) and must never be exposed to the inspector-facing view —
+        # inspectors act on complaint evidence, not on who filed it.
     }
 
 
@@ -347,6 +350,7 @@ def index():
             <div class="text-center mb-4">
                 <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance Platform</h2>
                 <p class="text-secondary mb-3" style="font-size: 0.95rem;">CDC FoodNet & FDA Model Food Code Aligned · Dual Citizen & Environmental Health Architecture</p>
+                <p class="text-secondary mb-3" style="font-size: 0.82rem; max-width: 640px; margin: 0 auto;">This platform separates public reporting from regulatory decision support: citizens submit anonymized complaints, while inspectors see only the triage evidence needed to act &mdash; never citizen contact details.</p>
                 
                 <!-- Role Switcher -->
                 <div class="view-switcher mb-3">
@@ -465,9 +469,9 @@ def index():
 
                 <!-- Citizen Contact Field -->
                 <div class="mb-4">
-                    <label class="form-label text-secondary fw-semibold">Contact Email for Inspection Status Updates</label>
-                    <input type="email" id="emailInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. resident@example.com (Receive confirmation and corrective actions taken)">
-                    <small class="text-secondary" style="font-size: 0.8rem;">We will email you once health inspectors complete the on-site verification.</small>
+                    <label class="form-label text-secondary fw-semibold">Contact Email <span class="text-secondary fw-normal">(Optional)</span></label>
+                    <input type="email" id="emailInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. resident@example.com (leave blank to report anonymously)">
+                    <small class="text-secondary d-block" style="font-size: 0.8rem;">Used only to notify you once inspectors complete their review. We do not collect your name or phone number, and your report is processed anonymously by the triage system either way. (Demo: email notifications are not actually sent.)</small>
                 </div>
 
                 <!-- Action Button -->
@@ -587,8 +591,18 @@ def index():
         <script>
             let currentPortal = 'citizen';
             let lastResultData = null;
+            let inspectorUnlocked = false;
+            const DEMO_INSPECTOR_CODE = 'DOHMH-DEMO-2026'; // NOTE: demo-only stand-in for real auth (e.g. SSO/role-based login)
 
             function switchPortal(portal) {
+                if (portal === 'inspector' && !inspectorUnlocked) {
+                    const entered = prompt('Health Inspector Portal — enter staff access code:\n(Demo purposes: type "' + DEMO_INSPECTOR_CODE + '")');
+                    if (entered !== DEMO_INSPECTOR_CODE) {
+                        alert('Access code incorrect. The inspector portal is restricted to authorized environmental health staff.');
+                        return;
+                    }
+                    inspectorUnlocked = true;
+                }
                 currentPortal = portal;
                 const btnCit = document.getElementById('btnCitizenRole');
                 const btnInsp = document.getElementById('btnInspectorRole');
