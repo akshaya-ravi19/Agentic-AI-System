@@ -1,15 +1,13 @@
 """
 api/index.py
 ------------
-Serverless Entrypoint for the Digital Health Syndromic Triage Platform.
-
-Optimized for Vercel Serverless Functions:
-1. Validated Syndromic Public Health Hazard Scoring (CDC FoodNet & FDA Model Code criteria)
-   - Evaluated via Category-Disjoint BiLSTM Neural Network (88% Recall, 86% Precision, 0.9657 PR-AUC)
-2. Interactive Digital Health Web UI & REST API (/health, /investigate, /)
+Dual-Portal Digital Health Syndromic Surveillance & Triage Platform.
+- Public Citizen Portal: Transparent submission, safety advice, tracking & notifications.
+- Health Inspector Portal: Regulatory triage queue, clinical severity metrics, 48hr action directives.
 """
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +18,6 @@ from pydantic import BaseModel
 app = FastAPI(title="Digital Health Syndromic Triage Platform")
 
 # ── Validated Syndromic Hazard Taxonomy ─────────────────────────
-# Aligned with CDC FoodNet Priority Syndromes & FDA Model Food Code
 CRITICAL_HAZARDS = [
     "food poisoned", "food poisoning", "vomit", "sick", "diarrhea", "fever", "nausea",
     "rodent infestation", "rodent", "mice", "rats", "roaches", "pesticide", "chemical", "sewage",
@@ -44,18 +41,18 @@ def compute_syndromic_score(text: str, category: Optional[str] = None) -> tuple[
 
 
 class InvestigateRequest(BaseModel):
-    complaint_id: Optional[str] = "SYNDROMIC-DEMO"
     category: Optional[str] = None
     restaurant_name: Optional[str] = None
     location: Optional[str] = None
     text: str
+    contact_email: Optional[str] = None
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "framework": "Digital Health Syndromic Surveillance",
+        "framework": "Digital Health Dual-Portal Surveillance",
         "validation_benchmark": "BiLSTM Category-Disjoint PR-AUC: 0.9657, Recall: 0.8810"
     }
 
@@ -67,13 +64,9 @@ def investigate(req: InvestigateRequest):
 
     score, hazard_flag = compute_syndromic_score(req.text, req.category)
     
-    # Epidemiological Reasoning & Triage
-    est_desc = []
-    if req.restaurant_name:
-        est_desc.append(f"Name: {req.restaurant_name}")
-    if req.location:
-        est_desc.append(f"Location: {req.location}")
-    est_str = ", ".join(est_desc) if est_desc else "Unspecified"
+    ref_id = f"NYC-DH-{uuid.uuid4().hex[:6].upper()}"
+    restaurant = req.restaurant_name.strip() if req.restaurant_name and req.restaurant_name.strip() else "Unspecified Establishment"
+    loc = req.location.strip() if req.location and req.location.strip() else "New York City"
 
     tier = "LOG"
     if score >= 0.70:
@@ -81,32 +74,70 @@ def investigate(req: InvestigateRequest):
     elif score >= 0.45:
         tier = "REVIEW"
 
-    # Action Directives
+    # 1. Citizen-Facing Feedback & Consumer Advisory
     if tier == "ESCALATE":
-        action_directive = (
+        citizen_summary = (
+            f"Your report regarding {restaurant} has been submitted successfully and ESCALATED immediately to the "
+            f"Emergency Environmental Health Response Unit due to indicators of acute biological hazards or foodborne pathogen symptoms."
+        )
+        safety_advisory = (
+            f"Cautionary Advisory: Due to imminent biohazard/pathogen risk indicators, we advise the public to avoid dining at {restaurant} "
+            f"pending an on-site environmental health evaluation."
+        )
+        citizen_next_steps = (
+            f"An Environmental Health Officer has been dispatched for an urgent on-site inspection within 48 hours. "
+            f"Once the inspection and laboratory tests are finalized, a complete report of corrective actions taken will be sent to your registered email "
+            f"({req.contact_email or 'your contact address'})."
+        )
+        inspector_directive = (
             "Critical biological contamination or acute foodborne pathogen symptoms detected. "
             "Prioritize for immediate environmental health on-site inspection within 48 hours to mitigate community transmission."
         )
     elif tier == "REVIEW":
-        action_directive = (
+        citizen_summary = (
+            f"Your report regarding {restaurant} has been submitted successfully and queued for SECONDARY REGULATORY REVIEW "
+            f"due to observed hygiene deficiencies or food handling violations."
+        )
+        safety_advisory = (
+            f"Advisory: Exercise discretion when visiting {restaurant}. Secondary hygiene concerns have been registered and are under investigation."
+        )
+        citizen_next_steps = (
+            f"A health inspection supervisor will review the establishment's violation history within 5 business days. "
+            f"You will receive an automated email notification detailing any citations issued or corrective measures enforced."
+        )
+        inspector_directive = (
             "Secondary hygiene failure or physical contamination hazard identified. "
             "Schedule for secondary regulatory review within 5 business days."
         )
     else:
-        action_directive = (
+        citizen_summary = (
+            f"Your report regarding {restaurant} has been logged in the municipal health surveillance system."
+        )
+        safety_advisory = (
+            f"Standard Status: No acute biohazards detected from the report. Safe for general visitation under routine municipal food code monitoring."
+        )
+        citizen_next_steps = (
+            f"The issue will be verified during the establishment's next routine annual inspection cycle. "
+            f"Inspection records remain publicly accessible on the municipal health portal."
+        )
+        inspector_directive = (
             "Routine non-pathogenic or administrative complaint. Log for next regular cycle inspection."
         )
 
     return {
-        "complaint_id": req.complaint_id,
-        "category": req.category or "Not Specified",
-        "establishment": est_str,
-        "complaint_summary": req.text,
+        "reference_id": ref_id,
+        "establishment": restaurant,
+        "location": loc,
+        "category": req.category or "General Food Safety Complaint",
+        "complaint_summary": req.text or req.category,
         "syndromic_score": score,
         "hazard_flag": hazard_flag,
         "triage_level": tier,
-        "action_directive": action_directive,
-        "surveillance_framework": "Aligned with CDC FoodNet Priority Syndromes & FDA Model Food Code (BiLSTM Validated)"
+        "citizen_summary": citizen_summary,
+        "safety_advisory": safety_advisory,
+        "citizen_next_steps": citizen_next_steps,
+        "inspector_directive": inspector_directive,
+        "contact_email": req.contact_email or "Not Provided"
     }
 
 
@@ -130,7 +161,6 @@ def index():
                 --accent-blue: #0284c7;
                 --text-light: #f8fafc;
                 --text-muted: #94a3b8;
-                --text-subtle: #64748b;
             }
             body { 
                 background-color: var(--bg-primary); 
@@ -142,36 +172,46 @@ def index():
                 background-color: var(--bg-card); 
                 border: 1px solid var(--border-color); 
                 border-radius: 14px; 
-                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+                box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
             }
-            .badge-LOG { background-color: #10b981; color: #ffffff; font-weight: 700; letter-spacing: 0.5px; }
-            .badge-REVIEW { background-color: #f59e0b; color: #1e1b4b; font-weight: 700; letter-spacing: 0.5px; }
-            .badge-ESCALATE { background-color: #ef4444; color: #ffffff; font-weight: 700; letter-spacing: 0.5px; }
+            
+            /* View Switcher Pills */
+            .view-switcher {
+                background-color: #0b1426;
+                border: 1px solid #233554;
+                border-radius: 30px;
+                padding: 4px;
+                display: inline-flex;
+            }
+            .view-btn {
+                border: none;
+                background: transparent;
+                color: #94a3b8;
+                font-size: 0.9rem;
+                font-weight: 600;
+                padding: 8px 22px;
+                border-radius: 25px;
+                transition: all 0.2s ease;
+            }
+            .view-btn.active {
+                background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+                color: #041329;
+                box-shadow: 0 2px 10px rgba(56, 189, 248, 0.4);
+            }
             
             .btn-primary { 
                 background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
                 border: none;
                 color: #041329; 
                 font-weight: 700;
-                letter-spacing: 0.3px;
-                transition: all 0.2s ease-in-out;
+                transition: all 0.2s ease;
             }
             .btn-primary:hover { 
                 background: linear-gradient(135deg, #38bdf8 0%, #7dd3fc 100%);
                 color: #041329;
                 transform: translateY(-1px);
-                box-shadow: 0 4px 14px rgba(56, 189, 248, 0.35);
             }
-            .btn-outline-secondary {
-                border-color: var(--border-color);
-                color: var(--text-muted);
-                transition: all 0.2s ease;
-            }
-            .btn-outline-secondary:hover {
-                background-color: #1e293b;
-                color: var(--text-light);
-                border-color: #475569;
-            }
+            
             .section-title { 
                 color: var(--accent-cyan); 
                 font-weight: 700; 
@@ -180,7 +220,6 @@ def index():
                 display: inline-block; 
             }
             
-            /* Quick Category Chips */
             .quick-tag {
                 cursor: pointer;
                 background-color: #1e293b;
@@ -198,10 +237,8 @@ def index():
                 background-color: #0284c7;
                 color: #ffffff;
                 border-color: #38bdf8;
-                transform: translateY(-1px);
             }
 
-            /* Metric Stat Cards */
             .metric-box {
                 background-color: var(--bg-inner);
                 border-radius: 10px;
@@ -213,7 +250,6 @@ def index():
                 justify-content: center;
             }
 
-            /* Assessment Section */
             .assessment-section { 
                 background-color: var(--bg-inner); 
                 border-radius: 12px; 
@@ -238,7 +274,7 @@ def index():
             }
             .item-label { 
                 color: var(--text-muted); 
-                width: 210px; 
+                width: 220px; 
                 flex-shrink: 0; 
                 font-weight: 600; 
             }
@@ -246,15 +282,15 @@ def index():
                 color: var(--text-light); 
                 flex-grow: 1; 
             }
-            
-            /* Action Directives Callout with High Contrast & Vivid Visibility */
+
+            /* Custom Styled Highlight Directives with Clear Contrast (Never Black) */
             .highlight-box { 
                 background: #0f2038; 
                 border-left: 6px solid var(--accent-cyan); 
                 padding: 18px 22px; 
                 border-radius: 0 10px 10px 0; 
-                margin-top: 18px; 
-                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+                margin-top: 14px; 
+                margin-bottom: 14px;
             }
             .highlight-box.escalate { 
                 background-color: #2b1118 !important; 
@@ -269,70 +305,67 @@ def index():
                 border-left-color: #10b981 !important; 
             }
             
-            /* Crisp vivid text colors that pop on dark theme - NEVER black */
             .directive-text {
-                font-size: 1.05rem !important;
-                line-height: 1.6 !important;
+                font-size: 1.02rem !important;
+                line-height: 1.55 !important;
                 font-weight: 500 !important;
                 display: block;
             }
-            .highlight-box.escalate .directive-text {
-                color: #fca5a5 !important; /* Vivid rose-red */
-                text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-            }
-            .highlight-box.review .directive-text {
-                color: #fde68a !important; /* Warm vibrant amber */
-                text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-            }
-            .highlight-box.log .directive-text {
-                color: #a7f3d0 !important; /* Fresh bright mint */
-                text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-            }
+            .highlight-box.escalate .directive-text { color: #fca5a5 !important; }
+            .highlight-box.review .directive-text { color: #fde68a !important; }
+            .highlight-box.log .directive-text { color: #a7f3d0 !important; }
+            
             .highlight-box-title {
-                font-size: 0.9rem !important;
+                font-size: 0.88rem !important;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
                 font-weight: 800 !important;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
                 display: block;
             }
             .highlight-box.escalate .highlight-box-title { color: #f87171 !important; }
             .highlight-box.review .highlight-box-title { color: #fbbf24 !important; }
             .highlight-box.log .highlight-box-title { color: #34d399 !important; }
 
-            /* Model Accuracy Callout */
-            .model-badge {
-                font-size: 0.78rem;
-                background: rgba(56, 189, 248, 0.12);
-                border: 1px solid rgba(56, 189, 248, 0.25);
-                color: #7dd3fc;
-                padding: 3px 8px;
-                border-radius: 6px;
+            .badge-LOG { background-color: #10b981; color: #ffffff; font-weight: 700; }
+            .badge-REVIEW { background-color: #f59e0b; color: #1e1b4b; font-weight: 700; }
+            .badge-ESCALATE { background-color: #ef4444; color: #ffffff; font-weight: 700; }
+
+            .role-indicator {
+                font-size: 0.82rem;
+                padding: 4px 12px;
+                border-radius: 12px;
+                border: 1px solid #334155;
+                background-color: #0f172a;
+                color: #94a3b8;
             }
         </style>
     </head>
     <body class="py-5">
-        <div class="container" style="max-width: 960px;">
-            <!-- Header -->
+        <div class="container" style="max-width: 980px;">
+            <!-- Main Header -->
             <div class="text-center mb-4">
-                <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance & Triage</h2>
-                <p class="text-secondary mb-2" style="font-size: 0.95rem;">Computational Public Health Intelligence · Early Outbreak Detection · Environmental Health CDSS</p>
-                <div class="d-flex justify-content-center flex-wrap gap-2">
-                    <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 px-3 py-1">CDC FoodNet Aligned</span>
-                    <span class="badge bg-primary bg-opacity-25 text-light border border-primary border-opacity-25 px-3 py-1">FDA Model Food Code</span>
-                    <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25 px-3 py-1">WHO Syndromic Standards</span>
-                    <span class="model-badge">BiLSTM Generalization: 88% Recall · 0.9657 PR-AUC</span>
+                <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance Platform</h2>
+                <p class="text-secondary mb-3" style="font-size: 0.95rem;">CDC FoodNet & FDA Model Food Code Aligned · Dual Citizen & Environmental Health Architecture</p>
+                
+                <!-- Role Switcher -->
+                <div class="view-switcher mb-3">
+                    <button class="view-btn active" id="btnCitizenRole" onclick="switchPortal('citizen')">Public Citizen Portal</button>
+                    <button class="view-btn" id="btnInspectorRole" onclick="switchPortal('inspector')">Health Inspector Portal</button>
                 </div>
             </div>
 
-            <!-- Complaint Submission Card -->
-            <div class="card p-4 shadow-sm mb-4">
+            <!-- Public Citizen Submission Form -->
+            <div class="card p-4 shadow-sm mb-4" id="submissionCard">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="section-title mb-0">Submit Syndromic Complaint for Public Health Triage</h5>
+                    <div>
+                        <h5 class="section-title mb-0" id="formHeaderTitle">Submit Food Safety Complaint</h5>
+                        <span class="role-indicator ms-2" id="roleBadge">Citizen Mode</span>
+                    </div>
                     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetForm()">Clear Form</button>
                 </div>
 
-                <!-- Complaint Category Dropdown -->
+                <!-- Complaint Category Select -->
                 <div class="mb-3">
                     <label class="form-label text-secondary fw-semibold">Complaint Category</label>
                     <select id="categorySelect" class="form-select bg-dark text-light border-secondary">
@@ -384,8 +417,8 @@ def index():
                     <textarea id="complaintText" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="Describe symptoms or observations (e.g., Acute onset of vomiting, high fever, and severe abdominal cramps after consuming undercooked seafood)."></textarea>
                 </div>
 
-                <!-- Establishment & Location Dropdowns (with custom entry) -->
-                <div class="row g-3 mb-4">
+                <!-- Establishment & Location Dropdowns -->
+                <div class="row g-3 mb-3">
                     <div class="col-md-6">
                         <label class="form-label text-secondary fw-semibold">Restaurant Name</label>
                         <input list="restaurantList" id="restaurantNameInput" class="form-control bg-dark text-light border-secondary" placeholder="Select or type restaurant name...">
@@ -430,86 +463,157 @@ def index():
                     </div>
                 </div>
 
+                <!-- Citizen Contact Field -->
+                <div class="mb-4">
+                    <label class="form-label text-secondary fw-semibold">Contact Email for Inspection Status Updates</label>
+                    <input type="email" id="emailInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. resident@example.com (Receive confirmation and corrective actions taken)">
+                    <small class="text-secondary" style="font-size: 0.8rem;">We will email you once health inspectors complete the on-site verification.</small>
+                </div>
+
                 <!-- Action Button -->
                 <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
-                    Execute Digital Health Triage
+                    Submit Complaint for Public Health Triage
                 </button>
             </div>
 
-            <!-- Results Card -->
-            <div id="resultsCard" class="card p-4 shadow-sm d-none mb-4">
+            <!-- Citizen Assessment View -->
+            <div id="citizenResultsCard" class="card p-4 shadow-sm d-none mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0 text-light fw-bold">Epidemiological Triage Assessment</h5>
-                    <span id="triageBadge" class="badge fs-6 px-3 py-2"></span>
+                    <h5 class="mb-0 text-light fw-bold">Public Health Triage Confirmation</h5>
+                    <span id="citizenBadge" class="badge fs-6 px-3 py-2"></span>
+                </div>
+
+                <div class="assessment-section mb-3">
+                    <div class="item-row">
+                        <div class="item-label">Case Reference ID:</div>
+                        <div class="item-value fw-bold text-info" id="citizenRefId">-</div>
+                    </div>
+                    <div class="item-row">
+                        <div class="item-label">Establishment:</div>
+                        <div class="item-value" id="citizenEstablishment">-</div>
+                    </div>
+                    <div class="item-row">
+                        <div class="item-label">Current Triage Status:</div>
+                        <div class="item-value fw-bold" id="citizenTriageStatus">-</div>
+                    </div>
+                    <div class="item-row">
+                        <div class="item-label">Submission Summary:</div>
+                        <div class="item-value" id="citizenSummaryText">-</div>
+                    </div>
+
+                    <!-- Consumer Safety Advisory (Safe to visit or not) -->
+                    <div class="highlight-box" id="safetyAdvisoryBox">
+                        <span class="highlight-box-title" id="safetyTitle">Consumer Safety Guidance</span>
+                        <div class="directive-text" id="displaySafetyAdvisory">-</div>
+                    </div>
+
+                    <!-- Next Steps & Corrective Actions Email Notice -->
+                    <div class="highlight-box log" id="nextStepsBox">
+                        <span class="highlight-box-title" style="color: #34d399 !important;">Next Steps & Corrective Action Updates</span>
+                        <div class="directive-text" style="color: #a7f3d0 !important;" id="displayCitizenNextSteps">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Health Inspector Assessment View -->
+            <div id="inspectorResultsCard" class="card p-4 shadow-sm d-none mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h5 class="mb-0 text-light fw-bold">Inspector CDSS Clinical Assessment</h5>
+                        <small class="text-secondary">Environmental Health Decision Support · CDC FoodNet Protocol</small>
+                    </div>
+                    <span id="inspectorBadge" class="badge fs-6 px-3 py-2"></span>
                 </div>
                 
-                <!-- Top Summary Metric Cards -->
+                <!-- Metric Cards -->
                 <div class="row text-center mb-4 g-3">
                     <div class="col-md-6">
                         <div class="metric-box">
-                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem; letter-spacing: 0.5px;">Syndromic Hazard Score</small>
-                            <h3 id="severityScore" class="fw-bold mb-0 text-info"></h3>
+                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem;">Syndromic Hazard Score</small>
+                            <h3 id="inspectorScore" class="fw-bold mb-0 text-info"></h3>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="metric-box">
-                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem; letter-spacing: 0.5px;">Public Health Hazard Flag</small>
-                            <h4 id="severityLabel" class="fw-bold mb-0" style="font-size: 1.15rem;"></h4>
+                            <small class="text-secondary text-uppercase fw-semibold d-block mb-1" style="font-size: 0.8rem;">Public Health Hazard Flag</small>
+                            <h4 id="inspectorLabel" class="fw-bold mb-0" style="font-size: 1.15rem;"></h4>
                         </div>
                     </div>
                 </div>
 
-                <!-- Formatted Assessment Section -->
+                <!-- Formatted Assessment -->
                 <div class="assessment-section">
                     <div class="assessment-header">Clinical Symptom & Hazard Screening</div>
                     <div class="item-row">
+                        <div class="item-label">Case Reference ID:</div>
+                        <div class="item-value text-info fw-bold" id="inspectorRefId">-</div>
+                    </div>
+                    <div class="item-row">
                         <div class="item-label">Target Establishment:</div>
-                        <div class="item-value" id="displayEstablishment">-</div>
+                        <div class="item-value" id="inspectorEstablishment">-</div>
                     </div>
                     <div class="item-row">
-                        <div class="item-label">Category Selected:</div>
-                        <div class="item-value" id="displayCategory">-</div>
+                        <div class="item-label">Syndromic Category:</div>
+                        <div class="item-value" id="inspectorCategory">-</div>
                     </div>
                     <div class="item-row">
-                        <div class="item-label">Complaint Analysis:</div>
-                        <div class="item-value" id="displayAnalysis">-</div>
+                        <div class="item-label">Complaint Corpus:</div>
+                        <div class="item-value" id="inspectorComplaint">-</div>
                     </div>
                     <div class="item-row">
-                        <div class="item-label">Syndromic Risk Score:</div>
-                        <div class="item-value" id="displayRiskScore">-</div>
-                    </div>
-                    <div class="item-row">
-                        <div class="item-label">Surveillance Category:</div>
-                        <div class="item-value" id="displaySurveillance">-</div>
+                        <div class="item-label">Surveillance Framework:</div>
+                        <div class="item-value" id="inspectorFramework">CDC FoodNet & FDA Model Food Code (BiLSTM Validated: 88% Recall, 0.9657 PR-AUC)</div>
                     </div>
 
-                    <div class="assessment-header mt-4">Epidemiological Decision Support</div>
+                    <div class="assessment-header mt-4">Regulatory Enforcement Directives</div>
                     <div class="item-row">
                         <div class="item-label">Recommended Triage Tier:</div>
-                        <div class="item-value fw-bold" id="displayTier">-</div>
+                        <div class="item-value fw-bold" id="inspectorTier">-</div>
                     </div>
                     
-                    <!-- Vivid Color-Coded Action Directive Box (Never Black) -->
-                    <div class="highlight-box" id="actionBox">
-                        <span class="highlight-box-title" id="actionTitle">Regulatory Action Directive</span>
-                        <div class="directive-text" id="displayAction">-</div>
+                    <!-- Regulatory Directive Box -->
+                    <div class="highlight-box" id="inspectorActionBox">
+                        <span class="highlight-box-title" id="inspectorActionTitle">Regulatory Action Directive</span>
+                        <div class="directive-text" id="displayInspectorAction">-</div>
                     </div>
 
                     <div class="text-secondary small mt-3" style="font-size: 0.82rem;">
-                        Note: AI decision support recommendation for public health and environmental clinical officers. Dispatches remain subject to local regulatory confirmation.
+                        Health Inspector Mode: Automated decision support output. Field dispatches and formal violation summonses remain subject to statutory health officer confirmation.
                     </div>
                 </div>
             </div>
         </div>
 
         <script>
-            // Synchronize category selection with textarea if empty
-            document.getElementById('categorySelect').addEventListener('change', function() {
-                const textElem = document.getElementById('complaintText');
-                if (!textElem.value.trim() && this.value) {
-                    textElem.value = this.value;
+            let currentPortal = 'citizen';
+            let lastResultData = null;
+
+            function switchPortal(portal) {
+                currentPortal = portal;
+                const btnCit = document.getElementById('btnCitizenRole');
+                const btnInsp = document.getElementById('btnInspectorRole');
+                const roleBadge = document.getElementById('roleBadge');
+                const formTitle = document.getElementById('formHeaderTitle');
+                const btnSubmit = document.getElementById('btnSubmit');
+
+                if (portal === 'citizen') {
+                    btnCit.classList.add('active');
+                    btnInsp.classList.remove('active');
+                    roleBadge.innerText = 'Citizen Mode';
+                    roleBadge.className = 'role-indicator ms-2 text-info';
+                    formTitle.innerText = 'Submit Food Safety Complaint';
+                    btnSubmit.innerText = 'Submit Complaint for Public Health Triage';
+                } else {
+                    btnInsp.classList.add('active');
+                    btnCit.classList.remove('active');
+                    roleBadge.innerText = 'Health Inspector CDSS Mode';
+                    roleBadge.className = 'role-indicator ms-2 text-warning';
+                    formTitle.innerText = 'Inspect & Evaluate Complaint Queue';
+                    btnSubmit.innerText = 'Evaluate Incident Triage Severity';
                 }
-            });
+
+                renderResultsView();
+            }
 
             function selectQuickCategory(val) {
                 const selectElem = document.getElementById('categorySelect');
@@ -524,7 +628,26 @@ def index():
                 document.getElementById('complaintText').value = '';
                 document.getElementById('restaurantNameInput').value = '';
                 document.getElementById('locationInput').value = '';
-                document.getElementById('resultsCard').classList.add('d-none');
+                document.getElementById('emailInput').value = '';
+                document.getElementById('citizenResultsCard').classList.add('d-none');
+                document.getElementById('inspectorResultsCard').classList.add('d-none');
+                lastResultData = null;
+            }
+
+            function renderResultsView() {
+                if (!lastResultData) return;
+                const citCard = document.getElementById('citizenResultsCard');
+                const inspCard = document.getElementById('inspectorResultsCard');
+
+                if (currentPortal === 'citizen') {
+                    citCard.classList.remove('d-none');
+                    inspCard.classList.add('d-none');
+                    citCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    inspCard.classList.remove('d-none');
+                    citCard.classList.add('d-none');
+                    inspCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
             }
 
             async function runTriage() {
@@ -532,8 +655,8 @@ def index():
                 const text = document.getElementById('complaintText').value.trim();
                 const restaurant_name = document.getElementById('restaurantNameInput').value.trim();
                 const location = document.getElementById('locationInput').value.trim();
+                const email = document.getElementById('emailInput').value.trim();
                 const btn = document.getElementById('btnSubmit');
-                const resultsCard = document.getElementById('resultsCard');
 
                 if (!text && !category) { 
                     alert('Please select an affected category or enter complaint details.'); 
@@ -541,8 +664,7 @@ def index():
                 }
 
                 btn.disabled = true;
-                btn.innerText = 'Analyzing Syndromic Indicators...';
-                resultsCard.classList.add('d-none');
+                btn.innerText = 'Analyzing Health Indicators...';
 
                 try {
                     const resp = await fetch('/investigate', {
@@ -552,7 +674,8 @@ def index():
                             text: text || category,
                             category: category || null,
                             restaurant_name: restaurant_name || null,
-                            location: location || null
+                            location: location || null,
+                            contact_email: email || null
                         })
                     });
                     const data = await resp.json();
@@ -562,44 +685,54 @@ def index():
                         return;
                     }
 
-                    document.getElementById('severityScore').innerText = data.syndromic_score.toFixed(3);
-                    document.getElementById('severityLabel').innerText = data.hazard_flag;
-                    document.getElementById('severityLabel').className = 'fw-bold mb-0 ' + (data.hazard_flag.includes('CRITICAL') || data.hazard_flag.includes('MODERATE') ? 'text-danger' : 'text-success');
-
-                    const badge = document.getElementById('triageBadge');
-                    badge.innerText = data.triage_level;
-                    badge.className = 'badge fs-6 px-3 py-2 badge-' + data.triage_level;
-
-                    // Clean assessment fields
-                    document.getElementById('displayEstablishment').innerText = data.establishment;
-                    document.getElementById('displayCategory').innerText = data.category;
-                    document.getElementById('displayAnalysis').innerText = '"' + data.complaint_summary + '"';
-                    document.getElementById('displayRiskScore').innerText = data.syndromic_score.toFixed(3) + ' (' + data.hazard_flag + ')';
-                    document.getElementById('displaySurveillance').innerText = data.surveillance_framework;
-                    document.getElementById('displayTier').innerText = data.triage_level;
-                    document.getElementById('displayAction').innerText = data.action_directive;
-
-                    // Style the highlight action box with explicit tier class
-                    const actionBox = document.getElementById('actionBox');
+                    lastResultData = data;
                     const tierClass = data.triage_level.toLowerCase();
-                    actionBox.className = 'highlight-box ' + tierClass;
-                    
-                    const actionTitle = document.getElementById('actionTitle');
+
+                    // Populate Citizen View
+                    document.getElementById('citizenBadge').innerText = data.triage_level;
+                    document.getElementById('citizenBadge').className = 'badge fs-6 px-3 py-2 badge-' + data.triage_level;
+                    document.getElementById('citizenRefId').innerText = data.reference_id;
+                    document.getElementById('citizenEstablishment').innerText = data.establishment + ' (' + data.location + ')';
+                    document.getElementById('citizenTriageStatus').innerText = data.triage_level + ' Priority';
+                    document.getElementById('citizenSummaryText').innerText = data.citizen_summary;
+                    document.getElementById('displaySafetyAdvisory').innerText = data.safety_advisory;
+                    document.getElementById('displayCitizenNextSteps').innerText = data.citizen_next_steps;
+
+                    const safetyBox = document.getElementById('safetyAdvisoryBox');
+                    safetyBox.className = 'highlight-box ' + tierClass;
+                    const safetyTitle = document.getElementById('safetyTitle');
+                    safetyTitle.innerText = (tierClass === 'escalate') ? 'Consumer Safety Alert (Cautionary)' : (tierClass === 'review' ? 'Consumer Safety Advisory' : 'Consumer Safety Guidance');
+
+                    // Populate Inspector View
+                    document.getElementById('inspectorBadge').innerText = data.triage_level;
+                    document.getElementById('inspectorBadge').className = 'badge fs-6 px-3 py-2 badge-' + data.triage_level;
+                    document.getElementById('inspectorScore').innerText = data.syndromic_score.toFixed(3);
+                    document.getElementById('inspectorLabel').innerText = data.hazard_flag;
+                    document.getElementById('inspectorLabel').className = 'fw-bold mb-0 ' + (data.hazard_flag.includes('CRITICAL') || data.hazard_flag.includes('MODERATE') ? 'text-danger' : 'text-success');
+                    document.getElementById('inspectorRefId').innerText = data.reference_id;
+                    document.getElementById('inspectorEstablishment').innerText = data.establishment + ' (' + data.location + ')';
+                    document.getElementById('inspectorCategory').innerText = data.category;
+                    document.getElementById('inspectorComplaint').innerText = '"' + data.complaint_summary + '"';
+                    document.getElementById('inspectorTier').innerText = data.triage_level;
+                    document.getElementById('displayInspectorAction').innerText = data.inspector_directive;
+
+                    const inspActionBox = document.getElementById('inspectorActionBox');
+                    inspActionBox.className = 'highlight-box ' + tierClass;
+                    const inspActionTitle = document.getElementById('inspectorActionTitle');
                     if (tierClass === 'escalate') {
-                        actionTitle.innerText = 'Immediate Regulatory Action Directive (Within 48 Hours)';
+                        inspActionTitle.innerText = 'Urgent Inspection Dispatch Directive (Within 48 Hours)';
                     } else if (tierClass === 'review') {
-                        actionTitle.innerText = 'Secondary Inspection Directive (Within 5 Business Days)';
+                        inspActionTitle.innerText = 'Secondary Inspection Directive (Within 5 Business Days)';
                     } else {
-                        actionTitle.innerText = 'Routine Cycle Directive';
+                        inspActionTitle.innerText = 'Routine Cycle Log Directive';
                     }
 
-                    resultsCard.classList.remove('d-none');
-                    resultsCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    renderResultsView();
                 } catch (e) {
                     alert('Request failed: ' + e);
                 } finally {
                     btn.disabled = false;
-                    btn.innerText = 'Execute Digital Health Triage';
+                    btn.innerText = (currentPortal === 'citizen') ? 'Submit Complaint for Public Health Triage' : 'Evaluate Incident Triage Severity';
                 }
             }
         </script>
