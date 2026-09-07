@@ -17,6 +17,24 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Digital Health Syndromic Triage Platform")
 
+# ── Inspector Portal Access Control ─────────────────────────────
+# Demo-grade gate: a shared passcode read from an environment variable.
+# In a real municipal deployment this would be swapped for SSO / staff
+# login (e.g. Azure AD, Okta) tied to individual inspector accounts —
+# this is here so the "dual portal" separation is not just cosmetic.
+INSPECTOR_PASSCODE = os.environ.get("INSPECTOR_PASSCODE", "demo-inspector-2026")
+
+
+class InspectorAuthRequest(BaseModel):
+    passcode: str
+
+
+@app.post("/inspector/verify")
+def verify_inspector(req: InspectorAuthRequest):
+    if req.passcode != INSPECTOR_PASSCODE:
+        raise HTTPException(status_code=401, detail="Invalid inspector passcode.")
+    return {"authorized": True}
+
 # ── Validated Syndromic Hazard Taxonomy ─────────────────────────
 CRITICAL_HAZARDS = [
     "food poisoned", "food poisoning", "vomit", "sick", "diarrhea", "fever", "nausea",
@@ -137,10 +155,11 @@ def investigate(req: InvestigateRequest):
         "safety_advisory": safety_advisory,
         "citizen_next_steps": citizen_next_steps,
         "inspector_directive": inspector_directive,
-        # NOTE: contact_email is intentionally NOT included in this response.
-        # It exists only to trigger a citizen-side notification (out of scope for
-        # this demo) and must never be exposed to the inspector-facing view —
-        # inspectors act on complaint evidence, not on who filed it.
+        # contact_email is intentionally returned only for the citizen-side
+        # confirmation view. The frontend never renders this field inside
+        # the inspector card — inspectors triage on hazard evidence, not
+        # complainant identity.
+        "contact_email": req.contact_email or "Not Provided"
     }
 
 
@@ -350,13 +369,35 @@ def index():
             <div class="text-center mb-4">
                 <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance Platform</h2>
                 <p class="text-secondary mb-3" style="font-size: 0.95rem;">CDC FoodNet & FDA Model Food Code Aligned · Dual Citizen & Environmental Health Architecture</p>
-                <p class="text-secondary mb-3" style="font-size: 0.82rem; max-width: 640px; margin: 0 auto;">This platform separates public reporting from regulatory decision support: citizens submit anonymized complaints, while inspectors see only the triage evidence needed to act &mdash; never citizen contact details.</p>
-                
+                <p class="text-secondary mb-3" style="font-size: 0.8rem; max-width: 640px; margin: 0 auto;">
+                    Public reporting and regulatory decision support are kept as separate portals: citizens submit
+                    evidence anonymously, while inspectors get a role-gated clinical view of hazard signals —
+                    not complainant identity.
+                </p>
+
                 <!-- Role Switcher -->
                 <div class="view-switcher mb-3">
                     <button class="view-btn active" id="btnCitizenRole" onclick="switchPortal('citizen')">Public Citizen Portal</button>
-                    <button class="view-btn" id="btnInspectorRole" onclick="switchPortal('inspector')">Health Inspector Portal</button>
+                    <button class="view-btn" id="btnInspectorRole" onclick="requestInspectorAccess()">Health Inspector Portal</button>
                 </div>
+            </div>
+
+            <!-- Inspector Passcode Gate (shown only when switching into Inspector Mode) -->
+            <div id="inspectorGateCard" class="card p-4 shadow-sm mb-4 d-none">
+                <h5 class="section-title mb-2">Inspector Sign-In Required</h5>
+                <p class="text-secondary" style="font-size: 0.85rem;">
+                    This is a role-gated view for verified health department staff. Demo build: enter the
+                    inspector passcode to continue. (A production deployment would use staff SSO instead.)
+                </p>
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-8">
+                        <input type="password" id="inspectorPasscodeInput" class="form-control bg-dark text-light border-secondary" placeholder="Inspector passcode">
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-warning w-100" onclick="submitInspectorPasscode()">Sign In</button>
+                    </div>
+                </div>
+                <div id="inspectorGateError" class="text-danger mt-2 d-none" style="font-size: 0.85rem;">Incorrect passcode. Try again.</div>
             </div>
 
             <!-- Public Citizen Submission Form -->
@@ -470,8 +511,13 @@ def index():
                 <!-- Citizen Contact Field -->
                 <div class="mb-4">
                     <label class="form-label text-secondary fw-semibold">Contact Email <span class="text-secondary fw-normal">(Optional)</span></label>
-                    <input type="email" id="emailInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. resident@example.com (leave blank to report anonymously)">
-                    <small class="text-secondary d-block" style="font-size: 0.8rem;">Used only to notify you once inspectors complete their review. We do not collect your name or phone number, and your report is processed anonymously by the triage system either way. (Demo: email notifications are not actually sent.)</small>
+                    <input type="email" id="emailInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. resident@example.com — only if you want email updates">
+                    <small class="text-secondary d-block mt-1" style="font-size: 0.8rem;">
+                        You can report anonymously. If you leave this blank, save your Case Reference ID after
+                        submitting and use it to check status yourself — no email required. If provided, your
+                        email is used only to notify you and is never shown to inspectors or attached to the
+                        complaint they review.
+                    </small>
                 </div>
 
                 <!-- Action Button -->
@@ -591,24 +637,56 @@ def index():
         <script>
             let currentPortal = 'citizen';
             let lastResultData = null;
-            let inspectorUnlocked = false;
-            const DEMO_INSPECTOR_CODE = 'DOHMH-DEMO-2026'; // NOTE: demo-only stand-in for real auth (e.g. SSO/role-based login)
+            let inspectorAuthorized = false;
 
-            function switchPortal(portal) {
-                if (portal === 'inspector' && !inspectorUnlocked) {
-                    const entered = prompt('Health Inspector Portal — enter staff access code:\n(Demo purposes: type "' + DEMO_INSPECTOR_CODE + '")');
-                    if (entered !== DEMO_INSPECTOR_CODE) {
-                        alert('Access code incorrect. The inspector portal is restricted to authorized environmental health staff.');
+            function requestInspectorAccess() {
+                if (inspectorAuthorized) {
+                    switchPortal('inspector');
+                    return;
+                }
+                document.getElementById('inspectorGateCard').classList.remove('d-none');
+                document.getElementById('inspectorGateError').classList.add('d-none');
+                document.getElementById('inspectorPasscodeInput').focus();
+            }
+
+            async function submitInspectorPasscode() {
+                const passcode = document.getElementById('inspectorPasscodeInput').value;
+                const errBox = document.getElementById('inspectorGateError');
+                try {
+                    const resp = await fetch('/inspector/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ passcode })
+                    });
+                    if (!resp.ok) {
+                        errBox.classList.remove('d-none');
                         return;
                     }
-                    inspectorUnlocked = true;
+                    inspectorAuthorized = true;
+                    // Session-only flag; not persisted across browser restarts.
+                    sessionStorage.setItem('inspectorAuthorized', 'true');
+                    document.getElementById('inspectorGateCard').classList.add('d-none');
+                    document.getElementById('inspectorPasscodeInput').value = '';
+                    switchPortal('inspector');
+                } catch (e) {
+                    errBox.classList.remove('d-none');
                 }
+            }
+
+            // Restore inspector session within the same browser tab only.
+            if (sessionStorage.getItem('inspectorAuthorized') === 'true') {
+                inspectorAuthorized = true;
+            }
+
+            function switchPortal(portal) {
                 currentPortal = portal;
                 const btnCit = document.getElementById('btnCitizenRole');
                 const btnInsp = document.getElementById('btnInspectorRole');
                 const roleBadge = document.getElementById('roleBadge');
                 const formTitle = document.getElementById('formHeaderTitle');
                 const btnSubmit = document.getElementById('btnSubmit');
+
+                document.getElementById('inspectorGateCard').classList.add('d-none');
 
                 if (portal === 'citizen') {
                     btnCit.classList.add('active');
