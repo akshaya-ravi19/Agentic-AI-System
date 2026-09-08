@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Digital Health Syndromic Triage Platform")
+app = FastAPI(title="Digital Public Health Syndromic Triage Platform")
 
 # ── Inspector Portal Access Control ─────────────────────────────
 # Demo-grade gate: a shared passcode read from an environment variable.
@@ -368,7 +368,7 @@ def index():
             <!-- Main Header -->
             <div class="text-center mb-4">
                 <h2 class="fw-bold text-light mb-2">Digital Health Syndromic Surveillance Platform</h2>
-                <p class="text-secondary mb-3" style="font-size: 0.95rem;">CDC FoodNet & FDA Model Food Code Aligned · Dual Citizen & Environmental Health Architecture</p>
+                <p class="text-secondary mb-3" style="font-size: 0.95rem;">Dual Citizen & Public Health Architecture</p>
                 <p class="text-secondary mb-3" style="font-size: 0.8rem; max-width: 640px; margin: 0 auto;">
                     Public reporting and regulatory decision support are kept as separate portals: citizens submit
                     evidence anonymously, while inspectors get a role-gated clinical view of hazard signals —
