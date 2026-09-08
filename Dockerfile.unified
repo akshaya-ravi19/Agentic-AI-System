@@ -21,7 +21,7 @@ COPY pipeline/__init__.py ./pipeline/__init__.py
 COPY app_unified.py ./app_unified.py
 
 ENV PORT=8080
-ENV MODEL_FILE=bilstm_classweight.keras
+ENV MODEL_FILE=bilstm_food_safety.keras
 
 EXPOSE 8080
 
