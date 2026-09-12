@@ -48,6 +48,36 @@ def get_inspection_history(camis_id: str) -> dict:
     }
 
 
+def resolve_camis(restaurant_name: str, location: str) -> str | None:
+    """
+    Resolve an establishment's internal CAMIS ID from its name and a
+    free-text location, since the public-facing form no longer asks
+    users for that ID directly -- matches how real citizen-complaint
+    portals work (they search by name/address, not an internal code).
+    """
+    if not restaurant_name:
+        return None
+    try:
+        from google.cloud import bigquery
+        query = f"""
+            SELECT camis, dba, boro, building, street, zipcode
+            FROM `{BQ_INSPECTIONS}`
+            WHERE UPPER(dba) LIKE UPPER(@name_pattern)
+            {"AND (UPPER(boro) LIKE UPPER(@loc_pattern) OR UPPER(street) LIKE UPPER(@loc_pattern) OR CAST(zipcode AS STRING) = @loc_exact)" if location else ""}
+            ORDER BY inspection_date DESC
+            LIMIT 1
+        """
+        params = [bigquery.ScalarQueryParameter("name_pattern", "STRING", f"%{restaurant_name.strip()}%")]
+        if location:
+            params.append(bigquery.ScalarQueryParameter("loc_pattern", "STRING", f"%{location.strip()}%"))
+            params.append(bigquery.ScalarQueryParameter("loc_exact", "STRING", location.strip()))
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        rows = list(get_bq().query(query, job_config=job_config).result())
+        return str(rows[0]["camis"]) if rows else None
+    except Exception:
+        return None
+
+
 def get_recent_complaints(camis_id: str, days: int = 30) -> dict:
     """Complaints against this establishment in the last N days."""
     camis_id = str(camis_id).strip()

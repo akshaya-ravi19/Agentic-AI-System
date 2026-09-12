@@ -1,7 +1,7 @@
 """
 app_unified.py
 --------------
-FoodGuard — Unified GCP Cloud Run Food Safety Triage Platform.
+Unified GCP Cloud Run Food Safety Triage Platform.
 Dual-portal architecture (Public Citizen & Environmental Health Inspector).
 
 Components:
@@ -63,12 +63,12 @@ def _load_models_sync():
     """Load models in a background thread so the port binds quickly."""
     global embedder, classifier_model, models_ready, model_loading_error
     try:
-        print("[FoodGuard] Step 1/2: Loading sentence-transformer...", flush=True)
+        print("[startup] Step 1/2: Loading sentence-transformer...", flush=True)
         from sentence_transformers import SentenceTransformer
         embedder = SentenceTransformer(EMBEDDING_MODEL, local_files_only=True)
-        print(f"[FoodGuard] SentenceTransformer ready from local cache ({EMBEDDING_MODEL}).", flush=True)
+        print(f"[startup] SentenceTransformer ready from local cache ({EMBEDDING_MODEL}).", flush=True)
 
-        print(f"[FoodGuard] Step 2/2: Loading complaint priority model ({MODEL_FILE})...", flush=True)
+        print(f"[startup] Step 2/2: Loading complaint priority model ({MODEL_FILE})...", flush=True)
         import tensorflow as tf
         if not MODEL_PATH.exists():
             raise FileNotFoundError(
@@ -77,10 +77,10 @@ def _load_models_sync():
             )
         classifier_model = tf.keras.models.load_model(str(MODEL_PATH))
         models_ready = True
-        print("[FoodGuard] All models loaded — /predict and /investigate are live.", flush=True)
+        print("[startup] All models loaded — /predict and /investigate are live.", flush=True)
     except Exception as exc:
         model_loading_error = str(exc)
-        print(f"[FoodGuard] FATAL model load error: {exc}", flush=True)
+        print(f"[startup] FATAL model load error: {exc}", flush=True)
     finally:
         _model_lock.set()
 
@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="FoodGuard — Food Safety Triage Platform", lifespan=lifespan)
+app = FastAPI(title="Food Safety Triage Platform", lifespan=lifespan)
 
 
 # ── BigQuery Tool Helpers ─────────────────────────────────────────────
@@ -158,6 +158,44 @@ def get_recent_complaints(camis_id: str, days: int = 30) -> dict:
         return {"camis": camis_id, "count": 0, "error": str(e)}
 
 
+def resolve_camis(restaurant_name: str, location: str) -> Optional[str]:
+    """
+    Resolve an establishment's internal CAMIS ID from its name and a
+    free-text location/borough/zip, since the public-facing form only
+    collects restaurant name + location -- not an internal DOHMH ID.
+    Mirrors how a real citizen-complaint portal works: match by name
+    and address, not an ID number the public wouldn't know.
+    """
+    if not restaurant_name or not restaurant_name.strip():
+        return None
+    try:
+        from google.cloud import bigquery
+        loc_clause = (
+            "AND (UPPER(boro) LIKE UPPER(@loc_pattern) "
+            "OR UPPER(street) LIKE UPPER(@loc_pattern) "
+            "OR CAST(zipcode AS STRING) = @loc_exact)"
+            if location and location.strip() else ""
+        )
+        query = f"""
+            SELECT camis, dba, boro, street, zipcode
+            FROM `{BQ_INSPECTIONS}`
+            WHERE UPPER(dba) LIKE UPPER(@name_pattern)
+            {loc_clause}
+            ORDER BY inspection_date DESC
+            LIMIT 1
+        """
+        params = [bigquery.ScalarQueryParameter("name_pattern", "STRING", f"%{restaurant_name.strip()}%")]
+        if location and location.strip():
+            params.append(bigquery.ScalarQueryParameter("loc_pattern", "STRING", f"%{location.strip()}%"))
+            params.append(bigquery.ScalarQueryParameter("loc_exact", "STRING", location.strip()))
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        rows = list(get_bq().query(query, job_config=job_config).result())
+        return str(rows[0]["camis"]) if rows else None
+    except Exception as e:
+        print(f"[resolve_camis] lookup failed: {e}", flush=True)
+        return None
+
+
 def get_cluster_context(camis_id: str) -> dict:
     camis_id = str(camis_id).strip()
     try:
@@ -218,12 +256,12 @@ def get_agent():
             os.environ["GEMINI_API_KEY"] = api_key
         llm = ChatGoogleGenerativeAI(
             model=GEMINI_MODEL,
-            api_key=api_key,
+            google_api_key=api_key,
             temperature=0.1
         )
         tools = [tool_inspection_history, tool_recent_complaints, tool_cluster_context]
         system_prompt = (
-            "You are FoodGuard, an AI decision support assistant for Environmental Health Officers "
+            "You are an AI decision support assistant for Environmental Health Officers "
             "operating under NYC Department of Health and Mental Hygiene (DOHMH) regulations.\n"
             "Analyze the complaint priority score, retrieve inspection history and cluster context, "
             "and recommend a triage tier:\n"
@@ -250,7 +288,7 @@ MODERATE_KEYWORDS = [
     "food spoiled", "food contaminated", "foreign object", "glass", "metal",
     "plastic", "hair", "bare hand", "bare hands", "food worker hygiene",
     "kitchen", "unsanitary", "filth flies", "flies", "cross-contamination",
-    "glove", "mold", "rotten", "decay"
+    "glove", "mold", "food cold", "rotten", "decay"
 ]
 
 
@@ -258,7 +296,7 @@ def compute_priority_score(text: str, category: Optional[str] = None) -> tuple[f
     combined = f"{category or ''} {text}".lower()
     for kw in CRITICAL_KEYWORDS:
         if kw in combined:
-            return 0.88, "Critical Hazard — Immediate Assessment Required"
+            return 0.88, "Critical — Immediate Assessment Required"
     for kw in MODERATE_KEYWORDS:
         if kw in combined:
             return 0.52, "Moderate Hygiene / Contamination Concern"
@@ -269,7 +307,7 @@ def analyze_visual_evidence(category: Optional[str], text: str, has_image: bool)
     if not has_image:
         return "No photographic evidence provided", "None", 0.0
     combined = f"{category or ''} {text}".lower()
-    if any(k in combined for k in ["undercooked", "raw chicken", "raw meat", "pink", "chicken", "meat", "poultry", "burger", "pork", "seafood"]):
+    if any(k in combined for k in ["undercooked", "raw chicken", "raw vegetables", "raw meat", "pink", "chicken", "meat", "poultry", "burger", "pork", "seafood"]):
         return (
             "Visual Hazard Identified: Undercooked or insufficiently cooked protein detected. "
             "Potential pathogen amplification risk consistent with thermal lethality failure.",
@@ -369,7 +407,7 @@ def health():
         "models_ready": models_ready,
         "model_file": MODEL_FILE,
         "error": model_loading_error,
-        "framework": "FoodGuard Unified Triage Platform",
+        "framework": "Food Safety Triage Platform",
         "bigquery_tools": "Inspection History, Cluster Context, Recent Complaints",
         "agent": "LangGraph ReAct (Google Gemini)"
     }
@@ -416,11 +454,14 @@ def investigate(req: InvestigateRequest):
         hazard_flag = f"Critical Hazard — Image Confirmed ({visual_label})"
 
     # 4. Gather BigQuery evidence
+    resolved_camis = resolve_camis(req.restaurant_name, req.location)
     evidence_data = {}
-    if req.camis:
-        evidence_data["inspections"] = get_inspection_history(req.camis)
-        evidence_data["recent_complaints"] = get_recent_complaints(req.camis)
-        evidence_data["cluster"] = get_cluster_context(req.camis)
+    if resolved_camis:
+       evidence_data["inspections"] = get_inspection_history(resolved_camis)
+       evidence_data["recent_complaints"] = get_recent_complaints(resolved_camis)
+       evidence_data["cluster"] = get_cluster_context(resolved_camis)
+    else:
+       evidence_data["note"] = "No matching establishment record found for the name/location provided."
 
     # 5. LangGraph Agent
     tier = None
@@ -431,18 +472,19 @@ def investigate(req: InvestigateRequest):
         agent = get_agent()
         est_parts = []
         if req.restaurant_name:
-            est_parts.append(f"Name='{req.restaurant_name}'")
+           est_parts.append(f"Name='{req.restaurant_name}'")
         if req.location:
-            est_parts.append(f"Location='{req.location}'")
-        if req.camis:
-            est_parts.append(f"ID={req.camis}")
+           est_parts.append(f"Location='{req.location}'")
         est_str = ", ".join(est_parts) if est_parts else "Establishment=Unspecified"
 
+        camis_note = f"Internal establishment ID resolved as CAMIS={resolved_camis}. Use this CAMIS value when calling your tools." if resolved_camis else "No establishment could be matched — proceed using complaint text, category, and priority score only."
+
         user_msg = (
-            f"New food safety complaint — Establishment ({est_str}): {req.text}\n"
-            f"Complaint category: {req.category or 'General Food Safety'}. "
-            f"Complaint priority score: {score:.3f} (threshold: 0.5 = actionable).\n"
-            f"Please investigate using your tools and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
+          f"New food safety complaint — Establishment ({est_str}): {req.text}\n"
+          f"{camis_note}\n"
+          f"Complaint category: {req.category or 'General Food Safety'}. "
+          f"Complaint priority score: {score:.3f} (threshold: 0.5 = actionable).\n"
+          f"Please investigate using your tools and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
         )
         res = agent.invoke({"messages": [{"role": "user", "content": user_msg}]})
         raw_msg = res["messages"][-1].content
@@ -578,7 +620,7 @@ def index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>FoodGuard — Food Safety Triage Platform</title>
+        <title>Food Safety Triage Portal</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
             :root {
@@ -820,9 +862,9 @@ def index():
 
             <!-- Header -->
             <div class="text-center mb-4">
-                <h2 class="fw-bold text-light mb-2">FoodGuard Food Safety Triage Platform</h2>
+                <h2 class="fw-bold text-light mb-2">Municipal Food Safety Triage Portal</h2>
                 <p class="text-secondary mb-2" style="font-size: 0.95rem;">
-                    AI-Powered Complaint Intelligence &amp; Environmental Health Decision Support
+                    Complaint Triage &amp; Environmental Health Inspection Support
                 </p>
                 <p class="text-secondary mb-3" style="font-size: 0.82rem; max-width: 700px; margin: 0 auto;">
                     Citizens report food safety concerns and submit photo evidence. Environmental health officers
@@ -986,12 +1028,6 @@ def index():
                             <option value="136-20 Roosevelt Avenue, Queens">
                         </datalist>
                     </div>
-                </div>
-
-                <!-- CAMIS ID (Inspector-only, hidden in citizen mode) -->
-                <div class="mb-3 d-none" id="camisRow">
-                    <label class="form-label text-secondary fw-semibold">Establishment ID (CAMIS)</label>
-                    <input type="text" id="camisInput" class="form-control bg-dark text-light border-secondary" placeholder="e.g. 50002628 — links to BigQuery inspection history">
                 </div>
 
                 <!-- Contact Email -->
@@ -1199,21 +1235,18 @@ def index():
                 currentPortal = mode;
                 const citizenBtn = document.getElementById('btnCitizenRole');
                 const inspectorBtn = document.getElementById('btnInspectorRole');
-                const camisRow = document.getElementById('camisRow');
                 const roleBadge = document.getElementById('roleBadge');
                 const formTitle = document.getElementById('formHeaderTitle');
 
                 if (mode === 'inspector') {
                     citizenBtn.classList.remove('active');
                     inspectorBtn.classList.add('active');
-                    camisRow.classList.remove('d-none');
                     roleBadge.innerText = 'Inspector Mode';
                     roleBadge.style.color = '#38bdf8';
                     formTitle.innerText = 'Assess Complaint — Inspector View';
                 } else {
                     inspectorBtn.classList.remove('active');
                     citizenBtn.classList.add('active');
-                    camisRow.classList.add('d-none');
                     roleBadge.innerText = 'Citizen Mode';
                     roleBadge.style.color = '#94a3b8';
                     formTitle.innerText = 'Submit a Food Safety Complaint';
@@ -1259,7 +1292,6 @@ def index():
                 document.getElementById('complaintText').value = '';
                 document.getElementById('restaurantNameInput').value = '';
                 document.getElementById('locationInput').value = '';
-                document.getElementById('camisInput').value = '';
                 document.getElementById('emailInput').value = '';
                 removeUploadedImage({ stopPropagation: () => {} });
                 document.getElementById('citizenResultsCard').classList.add('d-none');
@@ -1272,7 +1304,6 @@ def index():
                 const category = document.getElementById('categorySelect').value.trim();
                 const restaurant_name = document.getElementById('restaurantNameInput').value.trim();
                 const location = document.getElementById('locationInput').value.trim();
-                const camis = document.getElementById('camisInput').value.trim();
                 const contact_email = document.getElementById('emailInput').value.trim();
                 const btn = document.getElementById('btnSubmit');
 
@@ -1292,7 +1323,6 @@ def index():
                         category: category || null,
                         restaurant_name: restaurant_name || null,
                         location: location || null,
-                        camis: camis || null,
                         contact_email: contact_email || null,
                         image_data: uploadedImageBase64 || null
                     };
