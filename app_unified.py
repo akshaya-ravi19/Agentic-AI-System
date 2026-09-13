@@ -87,10 +87,8 @@ def _load_models_sync():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load models synchronously during startup.
-    # Cloud Run will wait for the port to bind (up to the startup probe timeout),
-    # ensuring requests are only routed here once models are fully ready.
-    _load_models_sync()
+    t = threading.Thread(target=_load_models_sync, daemon=True, name="model-loader")
+    t.start()
     yield
 
 app = FastAPI(title="Food Safety Triage Platform", lifespan=lifespan)
@@ -460,7 +458,11 @@ def verify_inspector_passcode(req: InspectorPasscodeRequest):
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     if not models_ready:
-        raise HTTPException(status_code=503, detail="Models are still initializing. Please retry in 10 seconds.")
+        print("[predict] Waiting for models to initialize...", flush=True)
+        _model_lock.wait(timeout=30)
+        if not models_ready:
+            raise HTTPException(status_code=503, detail="Models are still initializing. Please retry in 10 seconds.")
+
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="Empty complaint text provided.")
     embedding = embedder.encode([req.text]).reshape(1, 1, -1)
@@ -471,7 +473,11 @@ def predict(req: PredictRequest):
 @app.post("/investigate", response_model=InvestigateResponse)
 def investigate(req: InvestigateRequest):
     if not models_ready:
-        raise HTTPException(status_code=503, detail="Models are still initializing.")
+        print("[investigate] Waiting for models to initialize...", flush=True)
+        _model_lock.wait(timeout=30)
+        if not models_ready:
+            raise HTTPException(status_code=503, detail="Models are still initializing.")
+
 
     # 1. Classify with trained model
     embedding = embedder.encode([req.text]).reshape(1, 1, -1)
