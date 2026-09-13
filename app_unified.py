@@ -19,12 +19,12 @@ import threading
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional
+
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-import numpy as np
+from restaurant_lookup import lookup_restaurant
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -228,18 +228,48 @@ _agent = None
 def get_agent():
     global _agent
     if _agent is None:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        import os
+        import google.generativeai as genai
         from langgraph.prebuilt import create_react_agent
         from langchain_core.tools import tool
 
+        class GeminiLLM:
+            """Simple wrapper mimicking LangChain LLM interface for Gemini SDK."""
+            def __init__(self, model_name: str, api_key: str | None = None):
+                api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if not api_key:
+                    raise ValueError("GEMINI API key not found in environment variables.")
+                genai.configure(api_key=api_key)
+                self.model = genai.GenerativeModel(model_name)
+
+            def invoke(self, prompt: str) -> str:
+                response = self.model.generate_content(prompt)
+                return response.text
+
         @tool
-        def tool_inspection_history(camis: str) -> str:
+        def tool_inspection_history(restaurant_name: str, borough: str) -> str:
+            """Query inspection history for an establishment identified by name and borough.
+            Internally resolves the CAMIS ID using `resolve_camis`.
+            """
+            import json
+            camis = resolve_camis(restaurant_name, borough)
+            if not camis:
+                return json.dumps({"error": "No matching establishment found."})
+            return json.dumps(get_inspection_history(camis), default=str)
             """Query official DOHMH past inspection history and grades for an establishment."""
             import json
             return json.dumps(get_inspection_history(camis), default=str)
 
         @tool
-        def tool_recent_complaints(camis: str) -> str:
+        def tool_recent_complaints(restaurant_name: str, borough: str) -> str:
+            """Query recent complaints for an establishment identified by name and borough.
+            Uses `resolve_camis` to obtain the internal ID.
+            """
+            import json
+            camis = resolve_camis(restaurant_name, borough)
+            if not camis:
+                return json.dumps({"error": "No matching establishment found."})
+            return json.dumps(get_recent_complaints(camis), default=str)
             """Query recent 311 citizen complaints filed against this establishment."""
             import json
             return json.dumps(get_recent_complaints(camis), default=str)
@@ -250,15 +280,21 @@ def get_agent():
             import json
             return json.dumps(get_cluster_context(camis), default=str)
 
-        api_key = GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            os.environ["GOOGLE_API_KEY"] = api_key
-            os.environ["GEMINI_API_KEY"] = api_key
-        llm = ChatGoogleGenerativeAI(
-            model=GEMINI_MODEL,
-            google_api_key=api_key,
-            temperature=0.1
+        llm = GeminiLLM(model_name=GEMINI_MODEL)
+
+        system_prompt = (
+            "You are an AI decision support assistant for Environmental Health Officers "
+            "operating under NYC Department of Health and Mental Hygiene (DOHMH) regulations.\\n"
+            "Analyze the complaint priority score, retrieve inspection history and cluster context, "
+            "and recommend a triage tier:\\n"
+            "- LOG: Routine/administrative issue — record for next scheduled inspection.\\n"
+            "- REVIEW: Secondary hygiene concern or repeat complaints — review within 5 business days.\\n"
+            "- ESCALATE: Acute foodborne illness indicators, critical pest infestation, or active "
+            "complaint cluster — prioritize for immediate on-site inspection within 48 hours.\\n"
+            "Always state your reasoning clearly tied to the evidence. "
+            "You only recommend; human environmental health officers make all regulatory decisions."
         )
+        _agent = create_react_agent(llm, tools, prompt=system_prompt)
         tools = [tool_inspection_history, tool_recent_complaints, tool_cluster_context]
         system_prompt = (
             "You are an AI decision support assistant for Environmental Health Officers "
@@ -364,7 +400,6 @@ class PredictResponse(BaseModel):
 
 class InvestigateRequest(BaseModel):
     complaint_ref: Optional[str] = None
-    camis: Optional[str] = None
     restaurant_name: Optional[str] = None
     location: Optional[str] = None
     category: Optional[str] = None
@@ -379,7 +414,6 @@ class InspectorPasscodeRequest(BaseModel):
 
 class InvestigateResponse(BaseModel):
     complaint_ref: str
-    camis: Optional[str]
     restaurant_name: Optional[str] = None
     location: Optional[str] = None
     category: Optional[str] = None
@@ -397,6 +431,8 @@ class InvestigateResponse(BaseModel):
     citizen_next_steps: str
     inspector_directive: str
     used_rule_based_fallback: bool
+    need_selection: bool = False
+    options: List[Dict] = []
 
 
 # ── REST API Endpoints ────────────────────────────────────────────────
@@ -454,14 +490,39 @@ def investigate(req: InvestigateRequest):
         hazard_flag = f"Critical Hazard — Image Confirmed ({visual_label})"
 
     # 4. Gather BigQuery evidence
-    resolved_camis = resolve_camis(req.restaurant_name, req.location)
+    matches = lookup_restaurant(req.restaurant_name, req.location) if (req.restaurant_name or req.location) else []
+    if len(matches) > 1:
+        return InvestigateResponse(
+            complaint_ref=req.complaint_ref or f"FG-{uuid.uuid4().hex[:6].upper()}",
+            restaurant_name=req.restaurant_name,
+            location=req.location,
+            category=req.category,
+            hazard_score=round(score, 4),
+            hazard_flag=hazard_flag,
+            triage_level="PENDING",
+            reasoning=f"Multiple establishments found matching '{req.restaurant_name}'. Please select the correct location.",
+            evidence={},
+            has_image=has_img,
+            visual_finding=visual_finding,
+            visual_label=visual_label,
+            visual_confidence=f"{visual_conf:.0%}" if has_img else "N/A",
+            citizen_summary="Multiple matching establishments found. Please confirm the exact restaurant location.",
+            safety_advisory="Pending establishment verification.",
+            citizen_next_steps="Please select the correct restaurant from the list provided.",
+            inspector_directive="Pending establishment verification.",
+            used_rule_based_fallback=False,
+            need_selection=True,
+            options=matches
+        )
+
+    resolved_camis = matches[0]["camis"] if matches else None
     evidence_data = {}
     if resolved_camis:
-       evidence_data["inspections"] = get_inspection_history(resolved_camis)
-       evidence_data["recent_complaints"] = get_recent_complaints(resolved_camis)
-       evidence_data["cluster"] = get_cluster_context(resolved_camis)
+        evidence_data["inspections"] = get_inspection_history(resolved_camis)
+        evidence_data["recent_complaints"] = get_recent_complaints(resolved_camis)
+        evidence_data["cluster"] = get_cluster_context(resolved_camis)
     else:
-       evidence_data["note"] = "No matching establishment record found for the name/location provided."
+        evidence_data["note"] = "No matching establishment record found for the name/location provided."
 
     # 5. LangGraph Agent
     tier = None
@@ -472,19 +533,16 @@ def investigate(req: InvestigateRequest):
         agent = get_agent()
         est_parts = []
         if req.restaurant_name:
-           est_parts.append(f"Name='{req.restaurant_name}'")
+            est_parts.append(f"Name='{req.restaurant_name}'")
         if req.location:
-           est_parts.append(f"Location='{req.location}'")
+            est_parts.append(f"Location='{req.location}'")
         est_str = ", ".join(est_parts) if est_parts else "Establishment=Unspecified"
 
-        camis_note = f"Internal establishment ID resolved as CAMIS={resolved_camis}. Use this CAMIS value when calling your tools." if resolved_camis else "No establishment could be matched — proceed using complaint text, category, and priority score only."
-
         user_msg = (
-          f"New food safety complaint — Establishment ({est_str}): {req.text}\n"
-          f"{camis_note}\n"
-          f"Complaint category: {req.category or 'General Food Safety'}. "
-          f"Complaint priority score: {score:.3f} (threshold: 0.5 = actionable).\n"
-          f"Please investigate using your tools and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
+            f"New food safety complaint — Establishment ({est_str}): {req.text}\n"
+            f"Complaint category: {req.category or 'General Food Safety'}. "
+            f"Complaint priority score: {score:.3f} (threshold: 0.5 = actionable).\n"
+            f"Please investigate using your tools and recommend a triage tier (LOG, REVIEW, or ESCALATE)."
         )
         res = agent.invoke({"messages": [{"role": "user", "content": user_msg}]})
         raw_msg = res["messages"][-1].content
@@ -590,7 +648,6 @@ def investigate(req: InvestigateRequest):
 
     return InvestigateResponse(
         complaint_ref=ref_id,
-        camis=req.camis,
         restaurant_name=req.restaurant_name,
         location=req.location,
         category=req.category,
@@ -620,7 +677,7 @@ def index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Food Safety Triage Portal</title>
+        <title>NYC Food Safety Complaint Portal</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
             :root {
@@ -862,10 +919,7 @@ def index():
 
             <!-- Header -->
             <div class="text-center mb-4">
-                <h2 class="fw-bold text-light mb-2">Municipal Food Safety Triage Portal</h2>
-                <p class="text-secondary mb-2" style="font-size: 0.95rem;">
-                    Complaint Triage &amp; Environmental Health Inspection Support
-                </p>
+                <h2 class="fw-bold text-light mb-2">NYC Food Safety Complaint Portal</h2>
                 <p class="text-secondary mb-3" style="font-size: 0.82rem; max-width: 700px; margin: 0 auto;">
                     Citizens report food safety concerns and submit photo evidence. Environmental health officers
                     access aggregated hazard intelligence, spatiotemporal cluster analysis, and regulatory triage directives.
@@ -971,6 +1025,15 @@ def index():
                                 <img id="previewImg" src="" alt="Uploaded evidence">
                                 <button type="button" class="remove-img-btn" onclick="removeUploadedImage(event)">&times;</button>
                             </div>
+                            <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
+                                Submit Complaint for Triage Assessment
+                            </button>
+                            <!-- Restaurant selection container, hidden initially -->
+                            <div id="selectionContainer" class="mt-3 d-none">
+                                <label class="form-label text-secondary fw-semibold">Select Matching Establishment</label>
+                                <select id="restaurantSelect" class="form-select bg-dark text-light border-secondary"></select>
+                                <button onclick="confirmSelection()" class="btn btn-success w-100 mt-2">Confirm Selection</button>
+                            </div>
                             <small class="text-success d-block mt-2">Image attached to complaint docket</small>
                         </div>
                     </div>
@@ -1007,26 +1070,26 @@ def index():
                     </div>
                     <div class="col-md-6">
                         <label class="form-label text-secondary fw-semibold">Location / Borough</label>
-                        <input list="locationList" id="locationInput" class="form-control bg-dark text-light border-secondary" placeholder="Select or type location...">
-                        <datalist id="locationList">
-                            <option value="Manhattan">
-                            <option value="Brooklyn">
-                            <option value="Queens">
-                            <option value="Bronx">
-                            <option value="Staten Island">
-                            <option value="Midtown Manhattan (10019)">
-                            <option value="Upper East Side, Manhattan (10028)">
-                            <option value="Lower East Side, Manhattan (10002)">
-                            <option value="Downtown Brooklyn (11201)">
-                            <option value="Williamsburg, Brooklyn (11211)">
-                            <option value="Flushing, Queens (11355)">
-                            <option value="Astoria, Queens (11105)">
-                            <option value="South Bronx (10451)">
-                            <option value="Harlem, Manhattan (10037)">
-                            <option value="Jamaica, Queens (11432)">
-                            <option value="10 Columbus Circle, Manhattan">
-                            <option value="136-20 Roosevelt Avenue, Queens">
-                        </datalist>
+                        <select id="locationInput" class="form-select bg-dark text-light border-secondary">
+                            <option value="">Select location or borough...</option>
+                            <option value="Manhattan">Manhattan</option>
+                            <option value="Brooklyn">Brooklyn</option>
+                            <option value="Queens">Queens</option>
+                            <option value="Bronx">Bronx</option>
+                            <option value="Staten Island">Staten Island</option>
+                            <option value="Midtown Manhattan (10019)">Midtown Manhattan (10019)</option>
+                            <option value="Upper East Side, Manhattan (10028)">Upper East Side, Manhattan (10028)</option>
+                            <option value="Lower East Side, Manhattan (10002)">Lower East Side, Manhattan (10002)</option>
+                            <option value="Downtown Brooklyn (11201)">Downtown Brooklyn (11201)</option>
+                            <option value="Williamsburg, Brooklyn (11211)">Williamsburg, Brooklyn (11211)</option>
+                            <option value="Flushing, Queens (11355)">Flushing, Queens (11355)</option>
+                            <option value="Astoria, Queens (11105)">Astoria, Queens (11105)</option>
+                            <option value="South Bronx (10451)">South Bronx (10451)</option>
+                            <option value="Harlem, Manhattan (10037)">Harlem, Manhattan (10037)</option>
+                            <option value="Jamaica, Queens (11432)">Jamaica, Queens (11432)</option>
+                            <option value="10 Columbus Circle, Manhattan">10 Columbus Circle, Manhattan</option>
+                            <option value="136-20 Roosevelt Avenue, Queens">136-20 Roosevelt Avenue, Queens</option>
+                        </select>
                     </div>
                 </div>
 
@@ -1039,9 +1102,7 @@ def index():
                     </small>
                 </div>
 
-                <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
-                    Submit Complaint for Triage Assessment
-                </button>
+
             </div>
 
             <!-- Citizen Results Card -->
@@ -1231,7 +1292,42 @@ def index():
                 document.getElementById('categorySelect').value = val;
             }
 
-            function switchPortal(mode) {
+
+            // ---- Selection handling for multiple restaurant matches ----
+            let pendingOptions = [];
+
+            function showRestaurantOptions(options) {
+                pendingOptions = options;
+                const select = document.getElementById('restaurantSelect');
+                select.innerHTML = '';
+                options.forEach(opt => {
+                    const el = document.createElement('option');
+                    el.value = JSON.stringify(opt);
+                    el.text = `${opt.dba} (${opt.boro})`;
+                    select.appendChild(el);
+                });
+                document.getElementById('selectionContainer').classList.remove('d-none');
+                // Disable submit button while waiting for selection
+                document.getElementById('btnSubmit').disabled = true;
+            }
+
+            function confirmSelection() {
+                const selVal = document.getElementById('restaurantSelect').value;
+                if (!selVal) {
+                    alert('Please select an establishment from the list.');
+                    return;
+                }
+                const opt = JSON.parse(selVal);
+                // Fill the form fields with the chosen establishment
+                document.getElementById('restaurantNameInput').value = opt.dba;
+                document.getElementById('locationInput').value = opt.boro;
+                // Hide selection UI and re-enable submit button
+                document.getElementById('selectionContainer').classList.add('d-none');
+                document.getElementById('btnSubmit').disabled = false;
+                // Re-run triage now that selection is made
+                runTriage();
+            }
+
                 currentPortal = mode;
                 const citizenBtn = document.getElementById('btnCitizenRole');
                 const inspectorBtn = document.getElementById('btnInspectorRole');
@@ -1287,17 +1383,7 @@ def index():
                 }
             }
 
-            function resetForm() {
-                document.getElementById('categorySelect').value = '';
-                document.getElementById('complaintText').value = '';
-                document.getElementById('restaurantNameInput').value = '';
-                document.getElementById('locationInput').value = '';
-                document.getElementById('emailInput').value = '';
-                removeUploadedImage({ stopPropagation: () => {} });
-                document.getElementById('citizenResultsCard').classList.add('d-none');
-                document.getElementById('inspectorResultsCard').classList.add('d-none');
-                lastResultData = null;
-            }
+
 
             async function runTriage() {
                 const text = document.getElementById('complaintText').value.trim();
@@ -1339,8 +1425,15 @@ def index():
                         return;
                     }
 
+                    if (data.need_selection) {
+                        // Show dropdown for user to pick an establishment
+                        showRestaurantOptions(data.options);
+                        return;
+                    }
+
                     lastResultData = data;
                     renderResults(data);
+
 
                 } catch (e) {
                     alert('Request failed: ' + e);
