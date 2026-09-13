@@ -1,6 +1,14 @@
 from typing import List, Dict
 from google.cloud import bigquery
-from .app_unified import BQ_INSPECTIONS, get_bq
+from config.config import BQ_INSPECTIONS, GCP_PROJECT
+
+_bq_client = None
+
+def get_bq():
+    global _bq_client
+    if _bq_client is None:
+        _bq_client = bigquery.Client(project=GCP_PROJECT)
+    return _bq_client
 
 def lookup_restaurant(restaurant_name: str, borough: str) -> List[Dict]:
     """Return a list of matching establishments for the given name and borough.
