@@ -87,10 +87,11 @@ def _load_models_sync():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    t = threading.Thread(target=_load_models_sync, daemon=True, name="model-loader")
-    t.start()
+    # Load models synchronously during startup.
+    # Cloud Run will wait for the port to bind (up to the startup probe timeout),
+    # ensuring requests are only routed here once models are fully ready.
+    _load_models_sync()
     yield
-
 
 app = FastAPI(title="Food Safety Triage Platform", lifespan=lifespan)
 

@@ -19,6 +19,7 @@ COPY models/bilstm/ ./models/bilstm/
 COPY pipeline/routing/ ./pipeline/routing/
 COPY pipeline/__init__.py ./pipeline/__init__.py
 COPY app_unified.py ./app_unified.py
+COPY restaurant_lookup.py ./restaurant_lookup.py
 
 ENV PORT=8080
 ENV MODEL_FILE=bilstm_food_safety.keras
