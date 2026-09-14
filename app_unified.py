@@ -196,29 +196,88 @@ def resolve_camis(restaurant_name: str, location: str) -> Optional[str]:
         return None
 
 
-def get_cluster_context(camis_id: str) -> dict:
-    camis_id = str(camis_id).strip()
+def get_pattern_signal(camis_id: Optional[str], location: str = "", complaint_type: str = "",
+                        symptoms: str = "", days: int = 14) -> dict:
+    """
+    Live evidence of a broader pattern — not just this one complaint.
+    Combines:
+      (a) confirmed offline HDBSCAN batch clusters for this establishment (if the
+          nightly job has already run and populated BQ_CLUSTERS), and
+      (b) a live same-window check for other recent complaints that share this
+          establishment, area, complaint type, and symptom description.
+    No internal ML/clustering terminology is exposed — inspectors see plain
+    evidence: how many related reports, where, and how similar.
+    """
+    result = {
+        "camis": camis_id,
+        "pattern_detected": False,
+        "confirmed_batch_pattern": False,
+        "related_recent_reports": 0,
+        "matching_locations": [],
+        "signal_strength": "none",
+    }
     try:
         from google.cloud import bigquery
-        query = f"""
-            SELECT cluster_id, descriptor, latitude, longitude
-            FROM `{BQ_CLUSTERS}`
-            WHERE CAST(matched_camis AS STRING) = @camis AND cluster_id >= 0
-            LIMIT 5
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("camis", "STRING", camis_id)]
-        )
-        rows = list(get_bq().query(query, job_config=job_config).result())
-        if not rows:
-            return {"camis": camis_id, "in_active_cluster": False}
-        return {
-            "camis": camis_id,
-            "in_active_cluster": True,
-            "cluster_id": rows[0].get("cluster_id")
-        }
-    except Exception:
-        return {"camis": camis_id, "in_active_cluster": False}
+        bq = get_bq()
+
+        # (a) Confirmed pattern from the nightly batch pattern-detection job, if available
+        if camis_id:
+            try:
+                batch_query = f"""
+                    SELECT cluster_id, descriptor, latitude, longitude
+                    FROM `{BQ_CLUSTERS}`
+                    WHERE CAST(matched_camis AS STRING) = @camis AND cluster_id >= 0
+                    LIMIT 5
+                """
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ScalarQueryParameter("camis", "STRING", camis_id)]
+                )
+                batch_rows = list(bq.query(batch_query, job_config=job_config).result())
+                if batch_rows:
+                    result["confirmed_batch_pattern"] = True
+                    result["pattern_detected"] = True
+            except Exception as e:
+                print(f"[get_pattern_signal] batch lookup skipped: {e}", flush=True)
+
+        # (b) Live signal: related recent complaints sharing location + complaint type + symptoms
+        if location or complaint_type or symptoms:
+            live_query = f"""
+                SELECT complaint_type, descriptor, boro, matched_camis, created_date
+                FROM `{BQ_COMPLAINTS_LABELLED}`
+                WHERE created_date >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
+                  AND (
+                        (@complaint_type != '' AND UPPER(complaint_type) = UPPER(@complaint_type))
+                        OR (@symptoms != '' AND UPPER(descriptor) LIKE UPPER(@symptoms_pattern))
+                      )
+                  AND (@location = '' OR UPPER(boro) LIKE UPPER(@loc_pattern))
+                ORDER BY created_date DESC
+                LIMIT 10
+            """
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("days", "INT64", days),
+                bigquery.ScalarQueryParameter("complaint_type", "STRING", complaint_type or ""),
+                bigquery.ScalarQueryParameter("symptoms", "STRING", symptoms or ""),
+                bigquery.ScalarQueryParameter("symptoms_pattern", "STRING", f"%{symptoms}%" if symptoms else "%"),
+                bigquery.ScalarQueryParameter("location", "STRING", location or ""),
+                bigquery.ScalarQueryParameter("loc_pattern", "STRING", f"%{location}%" if location else "%"),
+            ])
+            live_rows = list(bq.query(live_query, job_config=job_config).result())
+            result["related_recent_reports"] = len(live_rows)
+            result["matching_locations"] = list({r.get("boro") for r in live_rows if r.get("boro")})
+            if len(live_rows) >= 3:
+                result["pattern_detected"] = True
+
+        if result["confirmed_batch_pattern"]:
+            result["signal_strength"] = "confirmed"
+        elif result["related_recent_reports"] >= 3:
+            result["signal_strength"] = "elevated"
+        elif result["related_recent_reports"] > 0:
+            result["signal_strength"] = "mild"
+
+        return result
+    except Exception as e:
+        result["error"] = str(e)
+        return result
 
 
 # ── Agent Factory ──────────────────────────────────────────────────────
@@ -238,8 +297,17 @@ def get_agent():
             def __init__(self, model_name: str, api_key: str | None = None):
                 api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
                 if not api_key:
-                    raise ValueError("GEMINI API key not found in environment variables.")
-                genai.configure(api_key=api_key)
+                    raise ValueError(
+                        "GEMINI API key not found in environment variables. "
+                        "Set GEMINI_API_KEY (or GOOGLE_API_KEY) as a Cloud Run env var "
+                        "to a real Google AI Studio API key -- not a service-account JSON."
+                    )
+                # transport="rest" is deliberate: if GOOGLE_APPLICATION_CREDENTIALS is also
+                # set in this environment (it is, for the BigQuery client), the default
+                # grpc transport can silently prefer those ADC/service-account credentials
+                # over this api_key, producing a 401 "Expected OAuth 2 access token" error
+                # from generativelanguage.googleapis.com. REST transport always uses api_key.
+                genai.configure(api_key=api_key, transport="rest")
                 self.model = genai.GenerativeModel(model_name)
 
             def invoke(self, prompt: str) -> str:
@@ -275,36 +343,29 @@ def get_agent():
             return json.dumps(get_recent_complaints(camis), default=str)
 
         @tool
-        def tool_cluster_context(camis: str) -> str:
-            """Check if establishment is part of a verified spatiotemporal complaint cluster."""
+        def tool_pattern_signal(restaurant_name: str, borough: str, complaint_type: str = "", symptoms: str = "") -> str:
+            """Check whether this establishment, location, complaint type, and symptom
+            profile matches a broader pattern of recent related complaints."""
             import json
-            return json.dumps(get_cluster_context(camis), default=str)
+            camis = resolve_camis(restaurant_name, borough)
+            return json.dumps(
+                get_pattern_signal(camis, borough, complaint_type, symptoms),
+                default=str
+            )
 
         llm = GeminiLLM(model_name=GEMINI_MODEL)
 
-        system_prompt = (
-            "You are an AI decision support assistant for Environmental Health Officers "
-            "operating under NYC Department of Health and Mental Hygiene (DOHMH) regulations.\\n"
-            "Analyze the complaint priority score, retrieve inspection history and cluster context, "
-            "and recommend a triage tier:\\n"
-            "- LOG: Routine/administrative issue — record for next scheduled inspection.\\n"
-            "- REVIEW: Secondary hygiene concern or repeat complaints — review within 5 business days.\\n"
-            "- ESCALATE: Acute foodborne illness indicators, critical pest infestation, or active "
-            "complaint cluster — prioritize for immediate on-site inspection within 48 hours.\\n"
-            "Always state your reasoning clearly tied to the evidence. "
-            "You only recommend; human environmental health officers make all regulatory decisions."
-        )
-        _agent = create_react_agent(llm, tools, prompt=system_prompt)
-        tools = [tool_inspection_history, tool_recent_complaints, tool_cluster_context]
+        tools = [tool_inspection_history, tool_recent_complaints, tool_pattern_signal]
         system_prompt = (
             "You are an AI decision support assistant for Environmental Health Officers "
             "operating under NYC Department of Health and Mental Hygiene (DOHMH) regulations.\n"
-            "Analyze the complaint priority score, retrieve inspection history and cluster context, "
+            "Analyze the complaint priority score, retrieve inspection history, and check for "
+            "related recent complaints at this establishment or nearby, "
             "and recommend a triage tier:\n"
             "- LOG: Routine/administrative issue — record for next scheduled inspection.\n"
             "- REVIEW: Secondary hygiene concern or repeat complaints — review within 5 business days.\n"
-            "- ESCALATE: Acute foodborne illness indicators, critical pest infestation, or active "
-            "complaint cluster — prioritize for immediate on-site inspection within 48 hours.\n"
+            "- ESCALATE: Acute foodborne illness indicators, critical pest infestation, or a confirmed "
+            "pattern of related complaints — prioritize for immediate on-site inspection within 48 hours.\n"
             "Always state your reasoning clearly tied to the evidence. "
             "You only recommend; human environmental health officers make all regulatory decisions."
         )
@@ -414,6 +475,7 @@ class InspectorPasscodeRequest(BaseModel):
 
 class InvestigateResponse(BaseModel):
     complaint_ref: str
+    resolved_camis: Optional[str] = None
     restaurant_name: Optional[str] = None
     location: Optional[str] = None
     category: Optional[str] = None
@@ -525,12 +587,26 @@ def investigate(req: InvestigateRequest):
 
     resolved_camis = matches[0]["camis"] if matches else None
     evidence_data = {}
+    evidence_data["camis"] = resolved_camis
     if resolved_camis:
         evidence_data["inspections"] = get_inspection_history(resolved_camis)
         evidence_data["recent_complaints"] = get_recent_complaints(resolved_camis)
-        evidence_data["cluster"] = get_cluster_context(resolved_camis)
+        evidence_data["pattern"] = get_pattern_signal(
+            resolved_camis,
+            location=req.location or "",
+            complaint_type=req.category or "",
+            symptoms=req.text or "",
+        )
     else:
         evidence_data["note"] = "No matching establishment record found for the name/location provided."
+        # Still run a live pattern check even with no resolved CAMIS -- the officer
+        # should see if other reports nearby share this complaint type/symptoms.
+        evidence_data["pattern"] = get_pattern_signal(
+            None,
+            location=req.location or "",
+            complaint_type=req.category or "",
+            symptoms=req.text or "",
+        )
 
     # 5. LangGraph Agent
     tier = None
@@ -656,6 +732,7 @@ def investigate(req: InvestigateRequest):
 
     return InvestigateResponse(
         complaint_ref=ref_id,
+        resolved_camis=resolved_camis,
         restaurant_name=req.restaurant_name,
         location=req.location,
         category=req.category,
@@ -1221,9 +1298,13 @@ def index():
                     </div>
                 </div>
 
-                <!-- Inspection History & Cluster Context -->
+                <!-- Inspection History & Pattern Intelligence -->
                 <div class="assessment-section">
-                    <div class="assessment-header">Inspection History &amp; Cluster Intelligence</div>
+                    <div class="assessment-header">Inspection History &amp; Pattern Intelligence</div>
+                    <div class="item-row">
+                        <div class="item-label">CAMIS ID:</div>
+                        <div class="item-value fw-bold text-info" id="inspectorCamis">-</div>
+                    </div>
                     <div class="item-row">
                         <div class="item-label">Most Recent Grade:</div>
                         <div class="item-value fw-bold" id="inspectorGrade">-</div>
@@ -1237,7 +1318,7 @@ def index():
                         <div class="item-value" id="inspectorInspCount">-</div>
                     </div>
                     <div class="item-row">
-                        <div class="item-label">Active Complaint Cluster:</div>
+                        <div class="item-label">Related Complaint Pattern:</div>
                         <div class="item-value" id="inspectorClusterStatus">-</div>
                     </div>
                     <div class="item-row">
@@ -1543,26 +1624,32 @@ def index():
                     document.getElementById('inspectorCategory').innerText = data.category || 'General Food Safety Complaint';
                     document.getElementById('inspectorComplaint').innerText = data.triage_level ? (data.complaint_ref ? data.reasoning ? '' : '-' : '-') : '-';
 
-                    // Inspection History & Cluster
+                    // Inspection History & Pattern Intelligence
                     const ev = data.evidence || {};
                     const insp = ev.inspections || {};
-                    const cluster = ev.cluster || {};
+                    const pattern = ev.pattern || {};
                     const recent = ev.recent_complaints || {};
 
-                    document.getElementById('inspectorGrade').innerText = insp.most_recent_grade || (Object.keys(insp).length ? 'Not Graded' : 'No CAMIS provided');
+                    document.getElementById('inspectorCamis').innerText = data.resolved_camis || 'No matching establishment found';
+
+                    document.getElementById('inspectorGrade').innerText = insp.most_recent_grade || (Object.keys(insp).length ? 'Not Graded' : 'No CAMIS resolved');
                     document.getElementById('inspectorLastAction').innerText = insp.last_action || '-';
                     document.getElementById('inspectorInspCount').innerText =
-                        insp.inspections ? insp.inspections.length + ' records retrieved' : 'No CAMIS provided';
+                        insp.inspections ? insp.inspections.length + ' records retrieved' : 'No CAMIS resolved';
 
                     const clusterEl = document.getElementById('inspectorClusterStatus');
-                    if (cluster.in_active_cluster) {
-                        clusterEl.innerHTML = `<span class="cluster-badge-active">Active Cluster — Cluster ID: ${cluster.cluster_id}</span>`;
+                    if (pattern.signal_strength === 'confirmed') {
+                        clusterEl.innerHTML = `<span class="cluster-badge-active">Confirmed pattern — ${pattern.related_recent_reports || 0} related reports${pattern.matching_locations && pattern.matching_locations.length ? ' in ' + pattern.matching_locations.join(', ') : ''}</span>`;
+                    } else if (pattern.signal_strength === 'elevated') {
+                        clusterEl.innerHTML = `<span class="cluster-badge-active">Elevated — ${pattern.related_recent_reports || 0} similar reports nearby (14d)</span>`;
+                    } else if (pattern.signal_strength === 'mild') {
+                        clusterEl.innerHTML = `<span class="cluster-badge-none">${pattern.related_recent_reports || 0} related report(s) nearby — below threshold</span>`;
                     } else {
-                        clusterEl.innerHTML = `<span class="cluster-badge-none">No active outbreak cluster</span>`;
+                        clusterEl.innerHTML = `<span class="cluster-badge-none">No related complaint pattern detected</span>`;
                     }
 
                     document.getElementById('inspectorRecentCount').innerText =
-                        recent.count !== undefined ? recent.count + ' complaints in past 30 days' : 'No CAMIS provided';
+                        recent.count !== undefined ? recent.count + ' complaints in past 30 days' : 'No CAMIS resolved';
 
                     // Triage Tier & Directive
                     const tierDisplay = document.getElementById('inspectorTier');
