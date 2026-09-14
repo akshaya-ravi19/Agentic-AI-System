@@ -1033,15 +1033,6 @@ def index():
                                 <img id="previewImg" src="" alt="Uploaded evidence">
                                 <button type="button" class="remove-img-btn" onclick="removeUploadedImage(event)">&times;</button>
                             </div>
-                            <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
-                                Submit Complaint for Triage Assessment
-                            </button>
-                            <!-- Restaurant selection container, hidden initially -->
-                            <div id="selectionContainer" class="mt-3 d-none">
-                                <label class="form-label text-secondary fw-semibold">Select Matching Establishment</label>
-                                <select id="restaurantSelect" class="form-select bg-dark text-light border-secondary"></select>
-                                <button onclick="confirmSelection()" class="btn btn-success w-100 mt-2">Confirm Selection</button>
-                            </div>
                             <small class="text-success d-block mt-2">Image attached to complaint docket</small>
                         </div>
                     </div>
@@ -1109,6 +1100,19 @@ def index():
                         You may report anonymously. If provided, your email is used only to notify you of inspection outcomes.
                     </small>
                 </div>
+
+                <!-- Restaurant selection container, displayed when multiple matches found -->
+                <div id="selectionContainer" class="p-3 mb-3 rounded bg-dark border border-warning d-none">
+                    <label class="form-label text-warning fw-semibold mb-1">Multiple matching establishments found in NYC database:</label>
+                    <p class="text-secondary small mb-2">Please select the specific restaurant location from the list below to proceed:</p>
+                    <select id="restaurantSelect" class="form-select bg-dark text-light border-secondary mb-2"></select>
+                    <button type="button" onclick="confirmSelection()" class="btn btn-warning w-100 fw-semibold">Confirm Establishment &amp; Continue</button>
+                </div>
+
+                <!-- Submit Button -->
+                <button onclick="runTriage()" class="btn btn-primary w-100 py-2 fs-6 shadow-sm" id="btnSubmit">
+                    Submit Complaint for Triage Assessment
+                </button>
 
 
             </div>
@@ -1336,6 +1340,23 @@ def index():
                 runTriage();
             }
 
+            function resetForm() {
+                document.getElementById('complaintText').value = '';
+                document.getElementById('categorySelect').value = '';
+                document.getElementById('restaurantNameInput').value = '';
+                document.getElementById('locationInput').value = '';
+                document.getElementById('emailInput').value = '';
+                removeUploadedImage({ stopPropagation: () => {} });
+                document.getElementById('citizenResultsCard').classList.add('d-none');
+                document.getElementById('inspectorResultsCard').classList.add('d-none');
+                const selContainer = document.getElementById('selectionContainer');
+                if (selContainer) selContainer.classList.add('d-none');
+                const btnSubmit = document.getElementById('btnSubmit');
+                if (btnSubmit) btnSubmit.disabled = false;
+                lastResultData = null;
+            }
+
+            function switchPortal(mode) {
                 currentPortal = mode;
                 const citizenBtn = document.getElementById('btnCitizenRole');
                 const inspectorBtn = document.getElementById('btnInspectorRole');
