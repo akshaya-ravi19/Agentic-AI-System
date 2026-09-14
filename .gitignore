@@ -47,6 +47,7 @@ ENV/
 *.ckpt
 models/**/*.keras
 models/**/*.h5
+!models/bilstm/bilstm_food_safety.keras
 
 # ============================================================
 # Data files (raw/processed data usually shouldn't live in git)
