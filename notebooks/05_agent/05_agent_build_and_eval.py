@@ -196,8 +196,8 @@ print("""
             expert_triage (LOG/REVIEW/ESCALATE)
 
 2. For each of 50 cases:
-   - Run agent → save: agent_triage, tool_calls, reasoning_chain, report
-   - Run rule_based_triage → save: rule_triage
+   - Run agent -> save: agent_triage, tool_calls, reasoning_chain, report
+   - Run rule_based_triage -> save: rule_triage
 
 3. Compute (vs expert_triage):
    - Cohen's Kappa for agent       (target >= 0.60)

@@ -199,5 +199,5 @@ summary = {
     "rule_kappa":                    kappa_rule  if agent_eval_ran else "TBD",
 }
 pd.DataFrame([summary]).to_csv(EVAL_DIR/"final_results_summary.csv", index=False)
-print(f"Saved → {EVAL_DIR}/final_results_summary.csv")
+print(f"Saved -> {EVAL_DIR}/final_results_summary.csv")
 print("\nEvaluation complete")

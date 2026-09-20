@@ -144,7 +144,14 @@ def run():
         print("No non-noise clusters found this run -- nothing to write.")
         return
 
-    job_config = bigquery.LoadJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_APPEND)
+    # autodetect=True is required here -- without it, this load fails
+    # on the very first run since the destination table doesn't exist
+    # yet and no explicit schema is provided. Autodetect lets BigQuery
+    # infer the schema from these rows and create the table on the fly.
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        autodetect=True,
+    )
     load_job = client.load_table_from_json(rows, BQ_CLUSTERS, job_config=job_config)
     load_job.result()
     print(f"Wrote {len(rows)} cluster-membership rows to {BQ_CLUSTERS}")

@@ -1,10 +1,10 @@
 """
 notebooks/04_bilstm/04_food_safety_classifier.py
 --------------------------------------------------
-Trains and evaluates a Deep BiLSTM Neural Network for the GCP FoodGuard
+Trains and evaluates a Deep BiLSTM Neural Network for the GCP
 Food Safety Complaint Triage system using robust cross-validation.
 
-Ground Truth: 3-tier NYC DOHMH municipal taxonomy (no CDC/FDA references).
+Ground Truth: 3-tier NYC DOHMH municipal taxonomy.
   - Tier 2 (Critical): Rodent/pest/temperature/hygiene/sewage/food source
   - Tier 1 (Moderate): Spoilage/contamination/foreign object/kitchen
   - Tier 0 (Routine): Grading/permit/toilet/odor/pet-animal
@@ -127,7 +127,7 @@ oof_preds = np.array(oof_preds)
 oof_probs = np.array(oof_probs)
 
 print("\n" + "=" * 60)
-print("FOODGUARD FOOD SAFETY COMPLAINT TRIAGE CLASSIFIER REPORT")
+print("FOOD SAFETY COMPLAINT TRIAGE CLASSIFIER REPORT")
 print("(Evaluated on Unseen Complaint Categories — No Leakage)")
 print("=" * 60)
 print(classification_report(oof_trues, oof_preds, target_names=["Routine / Low Priority (0)", "Actionable Hazard (1)"]))

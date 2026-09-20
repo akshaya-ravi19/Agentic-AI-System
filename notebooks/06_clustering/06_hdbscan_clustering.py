@@ -117,7 +117,7 @@ cutoff = df["created_date"].max() - pd.Timedelta(days=HDBSCAN_WINDOW_DAYS)
 mask   = df["created_date"] >= cutoff
 df_w   = df[mask].copy().reset_index(drop=True)
 feat_w = features[mask.values]
-print(f"Window: last {HDBSCAN_WINDOW_DAYS} days → {len(df_w):,} complaints")
+print(f"Window: last {HDBSCAN_WINDOW_DAYS} days -> {len(df_w):,} complaints")
 
 clusterer = hdbscan.HDBSCAN(
     min_cluster_size=HDBSCAN_MIN_CLUSTER_SIZE,
@@ -170,4 +170,4 @@ for _, row in df_w[df_w["cluster_id"]>=0].iterrows():
     ).add_to(m)
 map_path = EVAL_DIR/"clustering"/"cluster_map.html"
 m.save(str(map_path))
-print(f"\nMap saved → open {map_path} in your browser")
+print(f"\nMap saved -> open {map_path} in your browser")

@@ -52,7 +52,7 @@ def evaluate(name, y_true, y_pred, y_prob):
     sr = (y_pred[y_true==1]==1).mean() if (y_true==1).any() else 0.0
     sp = (y_true[y_pred==1]==1).mean() if (y_pred==1).any() else 0.0
     print(f"PR-AUC:         {pr_auc:.4f}")
-    print(f"Severe recall:  {sr:.4f}  ← PRIMARY METRIC")
+    print(f"Severe recall:  {sr:.4f}  <-- PRIMARY METRIC")
     print(f"Severe prec:    {sp:.4f}")
     results.append({"model":name,"pr_auc":round(pr_auc,4),
                     "severe_recall":round(sr,4),"severe_precision":round(sp,4)})
@@ -155,6 +155,30 @@ df_res = pd.DataFrame(results)
 print(f"\n{'='*55}\nFINAL COMPARISON\n{'='*55}")
 print(df_res.to_string(index=False))
 df_res.to_csv(EVAL_DIR/"classifier"/"comparison.csv", index=False)
+
+# ── Save test predictions for fairness audit (notebook 07) ────
+try:
+    best_model_name = df_res.loc[df_res["pr_auc"].idxmax(), "model"]
+    prob_map = {
+        "BiLSTM + SMOTE": p_smote,
+        "BiLSTM + Class Weighting": p_cw,
+        "BiLSTM + Focal Loss": p_focal,
+    }
+    best_probs = prob_map.get(best_model_name, p_cw)
+    best_preds = (best_probs >= 0.5).astype(int)
+    df_test_preds = pd.DataFrame({"y_true": y_test, "y_pred": best_preds, "y_prob": best_probs})
+    df_labelled = pd.read_csv(DATA_LABELLED / "labelled_complaints.csv", low_memory=False)
+    meta_cols = [c for c in ["borough", "cuisine_description"] if c in df_labelled.columns]
+    if meta_cols and len(df_labelled) >= len(y_test):
+        df_meta = df_labelled[meta_cols].tail(len(y_test)).reset_index(drop=True)
+        for col in meta_cols:
+            df_test_preds[col] = df_meta[col].values
+    pred_path = EVAL_DIR / "classifier" / "test_predictions.csv"
+    df_test_preds.to_csv(pred_path, index=False)
+    print(f"Test predictions saved -> {pred_path}")
+except Exception as _e:
+    print(f"Could not save test predictions for fairness audit: {_e}")
+
 
 # NOTE: picking the "best" model by severe_recall ALONE is a trap --
 # a model that predicts "severe" for every single input gets 100%
