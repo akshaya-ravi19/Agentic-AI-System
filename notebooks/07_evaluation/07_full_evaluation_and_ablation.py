@@ -108,9 +108,9 @@ If it does not: discuss whether that component is necessary.
 # risk, that's a real equity problem for a tool influencing which
 # restaurants get inspected.
 print("\n--- FAIRNESS / BIAS AUDIT ---")
-labelled_path = DATA_LABELLED / "labelled_complaints.csv"
+labelled_path = DATA_LABELLED / "labelled_complaints_ground_truth.csv"
 if labelled_path.exists() and clf_path.exists():
-    df_fair = pd.read_csv(labelled_path)
+    df_fair = pd.read_csv(labelled_path, low_memory=False)
     # Needs model predictions on this data -- if you already saved
     # per-row predictions from notebook 04, load them here instead
     # of re-predicting. This assumes a `predicted_label` column;

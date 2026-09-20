@@ -1,12 +1,18 @@
 # ============================================================
 # NOTEBOOK 06 — HDBSCAN Spatiotemporal Clustering
-# 5-dimensional feature space:
+# Data source: Ground Truth A — labelled_complaints_ground_truth.csv
+#   (73,450 NYC 311 food safety complaints, 3-tier municipal taxonomy)
+#   Coherent with 04_food_safety_classifier.py (production BiLSTM).
+#
+# Feature space:
 #   1+2: Latitude, Longitude (geographic)
 #   3:   Unix timestamp      (temporal)
 #   4:   Complaint type      (categorical, downweighted)
 #   5:   Symptom flag        (illness signal — binary)
 #   6:   Food category       (categorical, downweighted)
-# Validates clusters against inspection outcomes (chi-square).
+#   7:   Establishment frequency (address-based repeat-complaint proxy)
+#   8:   Hazard severity     (priority_label from GT-A taxonomy)
+# Validates clusters against hazard priority (chi-square).
 # ============================================================
 import pandas as pd, numpy as np, hdbscan, folium
 from sklearn.preprocessing import MinMaxScaler
@@ -19,10 +25,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from config.config import *
 EVAL_DIR.joinpath("clustering").mkdir(parents=True, exist_ok=True)
 
-df = pd.read_csv(DATA_LABELLED/"labelled_complaints.csv", parse_dates=["created_date"])
+# Use GT-A: full 73,450-row municipal taxonomy dataset — coherent with
+# the production BiLSTM (04_food_safety_classifier.py).
+# GT-B (labelled_complaints.csv, 1,458 rows) was used previously but
+# it's the DOHMH-matched research subset with extreme imbalance;
+# clustering on it produced only 105 complaints in the 30-day window.
+# GT-A gives 50x more data and richer geographic/temporal coverage.
+df = pd.read_csv(DATA_LABELLED/"labelled_complaints_ground_truth.csv", parse_dates=["created_date"], low_memory=False)
+df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
 df = df.dropna(subset=["latitude","longitude","created_date"]).copy()
-df["latitude"]  = df["latitude"].astype(float)
-df["longitude"] = df["longitude"].astype(float)
 print(f"Loaded: {len(df):,} complaints for clustering")
 
 # ── Dimension 4: Symptom flag ─────────────────────────────────
@@ -63,33 +75,29 @@ if "violation_category" not in df.columns:
     df["violation_category"] = df["descriptor"].apply(get_violation_category)
 type_dummies = pd.get_dummies(df["violation_category"], prefix="type")
 
-# ── Dimension: Restaurant identity (CAMIS) ──────────────────────
-# Explicitly requested addition: lat/long alone can't fully stand
-# in for "same restaurant" (e.g. GPS jitter, or a complaint logged
-# against a nearby cross-street). Encode restaurant identity as its
-# own signal so repeat complaints against the SAME establishment
-# cluster together even if their coordinates aren't pixel-identical.
-# A raw one-hot of every CAMIS would blow up the feature space, so
-# instead we use each restaurant's rolling complaint frequency as a
-# lightweight numeric proxy for "how much recent history exists
-# here" -- restaurants with more complaints get a distinguishing
-# signal without one-hot dimensionality explosion.
-if "matched_camis" in df.columns:
+# ── Dimension: Establishment identity ─────────────────────────
+# GT-A does not have matched_camis (that's only in GT-B after DOHMH
+# fuzzy-matching). Instead use incident_address as the establishment
+# identity proxy — complaints at the same street address are almost
+# certainly against the same restaurant, and rolling frequency of
+# complaints at that address is a meaningful "repeat offender" signal.
+if "incident_address" in df.columns:
+    addr_freq = df["incident_address"].str.strip().str.upper().value_counts()
+    df["restaurant_freq"] = df["incident_address"].str.strip().str.upper().map(addr_freq).fillna(0)
+elif "matched_camis" in df.columns:
     camis_freq = df["matched_camis"].value_counts()
     df["restaurant_freq"] = df["matched_camis"].map(camis_freq).fillna(0)
 else:
     df["restaurant_freq"] = 0
 
 # ── Dimension: Severity ──────────────────────────────────────
-# Explicitly requested dimension: complaints linked to a severe
-# outcome (grade C / closure, per notebook 03's redefinition) should
-# pull clustering toward grouping serious cases together, not just
-# by space/time/type alone. Using it as an INPUT feature here is
-# separate from the chi-square validation step further down (which
-# checks whether resulting clusters correspond to severity
-# afterwards) -- one uses severity to help shape the clusters, the
-# other independently checks if the shapes it found make sense.
-if "label" in df.columns:
+# GT-A uses priority_label (1=Actionable Hazard, 0=Routine) from
+# the 3-tier municipal taxonomy. This replaces the DOHMH outcome
+# label (Grade C / Closure) used in GT-B — it's available for all
+# 73,450 records and is coherent with the production BiLSTM target.
+if "priority_label" in df.columns:
+    df["severity_feature"] = df["priority_label"].fillna(0).astype(float)
+elif "label" in df.columns:
     df["severity_feature"] = df["label"].fillna(0).astype(float)
 else:
     df["severity_feature"] = 0.0
@@ -138,36 +146,50 @@ if in_cluster.sum() > 1 and df_w.loc[in_cluster,"cluster_id"].nunique() > 1:
     print(f"Davies-Bouldin:   {db:.4f} (lower=better, ideal<1.0)")
 
 # ── Evaluation 2: Predictive validity (chi-square) ────────────
-if "label" in df_w.columns:
-    df_w["in_cluster"] = (df_w["cluster_id"]>=0).astype(int)
-    ct = pd.crosstab(df_w["in_cluster"], df_w["label"])
-    print(f"\nCross-tabulation (in_cluster vs severe label):\n{ct}")
+# Check whether cluster membership correlates with hazard priority.
+# GT-A: uses priority_label (Actionable=1 vs Routine=0)
+# GT-B fallback: uses label (Severe=1 vs Non-severe=0)
+label_col = "priority_label" if "priority_label" in df_w.columns else "label"
+if label_col in df_w.columns:
+    df_w["in_cluster"] = (df_w["cluster_id"] >= 0).astype(int)
+    ct = pd.crosstab(df_w["in_cluster"], df_w[label_col])
+    print(f"\nCross-tabulation (in_cluster vs {label_col}):\n{ct}")
     chi2, p, dof, _ = chi2_contingency(ct)
     print(f"Chi-square: {chi2:.2f} | p-value: {p:.4f}")
-    print("Clusters carry significant predictive signal" if p<0.05
+    print("Clusters carry significant predictive signal" if p < 0.05
           else "No significant predictive signal found")
 
-# ── Evaluation 3: Manual coherence instructions ───────────────
+# ── Evaluation 3: Manual coherence check ─────────────────────
 print("\n=== Manual coherence check ===")
 for cid in sorted(df_w["cluster_id"].unique()):
     if cid == -1: continue
-    texts = df_w[df_w["cluster_id"]==cid]["descriptor"].head(3).tolist()
-    print(f"\nCluster {cid} (review these and decide if they are related):")
-    for t in texts: print(f"  - {t[:80]}")
+    subset = df_w[df_w["cluster_id"] == cid]
+    texts = subset["descriptor"].head(3).tolist()
+    boro = subset["borough"].mode()[0] if "borough" in subset.columns else "?"
+    actionable_pct = subset[label_col].mean() if label_col in subset.columns else 0
+    print(f"\nCluster {cid} | Borough: {boro} | Actionable: {actionable_pct:.0%} | n={len(subset)}")
+    for t in texts:
+        print(f"  - {t[:80]}")
 
 # ── Save results ──────────────────────────────────────────────
 df_w.to_csv(EVAL_DIR/"clustering"/"cluster_results.csv", index=False)
 
 # ── Map visualisation ─────────────────────────────────────────
 m = folium.Map(location=[df_w["latitude"].mean(), df_w["longitude"].mean()], zoom_start=12)
-colors = ["red","blue","green","purple","orange","darkred","cadetblue","darkgreen","pink"]
-for _, row in df_w[df_w["cluster_id"]>=0].iterrows():
+colors = ["red","blue","green","purple","orange","darkred","cadetblue","darkgreen","pink",
+          "lightred","beige","lightblue","lightgreen","gray","black"]
+hazard_cat = "hazard_category" if "hazard_category" in df_w.columns else label_col
+for _, row in df_w[df_w["cluster_id"] >= 0].iterrows():
+    popup_txt = (f"Pattern Group {row['cluster_id']}: {str(row.get('descriptor',''))[:40]}"
+                 f" | {str(row.get(hazard_cat,''))[:30]}"
+                 f" | {str(row.get('borough',''))}")
     folium.CircleMarker(
         location=[row["latitude"], row["longitude"]],
         radius=5, color=colors[int(row["cluster_id"]) % len(colors)],
         fill=True, fill_opacity=0.7,
-        popup=f"Cluster {row['cluster_id']}: {str(row.get('descriptor',''))[:50]}"
+        popup=popup_txt
     ).add_to(m)
 map_path = EVAL_DIR/"clustering"/"cluster_map.html"
 m.save(str(map_path))
 print(f"\nMap saved -> open {map_path} in your browser")
+

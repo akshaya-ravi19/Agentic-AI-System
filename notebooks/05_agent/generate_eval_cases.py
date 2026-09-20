@@ -27,11 +27,19 @@ np.random.seed(RANDOM_SEED)
 
 EVAL_DIR.joinpath("agent").mkdir(parents=True, exist_ok=True)
 
-# Load labelled complaints (DOHMH-joined, has matched_camis + label)
-df = pd.read_csv(DATA_LABELLED / "labelled_complaints.csv",
+# Load labelled complaints (GT-A, has priority_label)
+df = pd.read_csv(DATA_LABELLED / "labelled_complaints_ground_truth.csv",
                  parse_dates=["created_date"],
-                 dtype={"matched_camis": str})
-print(f"Loaded {len(df):,} labelled complaints")
+                 low_memory=False)
+print(f"Loaded {len(df):,} labelled complaints (GT-A)")
+
+# Add camis from GT-B if available (so we can attach real grades)
+gt_b_path = DATA_LABELLED / "labelled_complaints.csv"
+if gt_b_path.exists():
+    df_b = pd.read_csv(gt_b_path, dtype={"matched_camis": str}, low_memory=False)
+    if "unique_key" in df.columns and "unique_key" in df_b.columns:
+        mapping = df_b.dropna(subset=["matched_camis"]).set_index("unique_key")["matched_camis"].to_dict()
+        df["matched_camis"] = df["unique_key"].map(mapping)
 
 # Load DOHMH inspections for grades
 dohmh_path = DATA_RAW / "dohmh_inspections.csv"
@@ -71,8 +79,9 @@ else:
 # --- Sample 50 cases with diversity: mix of severe and non-severe ---
 n_cases = 50
 # Oversample severe so we get a mix
-severe_cases = df[df["label"] == 1].dropna(subset=["descriptor"]) if "label" in df.columns else pd.DataFrame()
-nonsevere_cases = df[df["label"] == 0].dropna(subset=["descriptor"]) if "label" in df.columns else df.dropna(subset=["descriptor"])
+label_col = "priority_label" if "priority_label" in df.columns else "label"
+severe_cases = df[df[label_col] == 1].dropna(subset=["descriptor"]) if label_col in df.columns else pd.DataFrame()
+nonsevere_cases = df[df[label_col] == 0].dropna(subset=["descriptor"]) if label_col in df.columns else df.dropna(subset=["descriptor"])
 
 n_severe = min(18, len(severe_cases))
 n_nonsevere = n_cases - n_severe
@@ -91,7 +100,7 @@ sample = pd.concat([sample_severe, sample_nonsevere]).reset_index(drop=True)
 cases = []
 for i, row in sample.iterrows():
     camis = str(row.get("matched_camis", "")).strip()
-    label = int(row.get("label", 0))
+    label = int(row.get(label_col, 0))
     last_grade = grade_map.get(camis, random.choice(["A", "A", "A", "B", "C"]))
     days_since = int(days_map.get(camis, random.randint(30, 400)))
     complaint_count = int(complaint_count_map.get(camis, random.randint(0, 4)))

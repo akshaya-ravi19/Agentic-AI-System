@@ -15,16 +15,35 @@ EVAL_DIR.joinpath("agent").mkdir(parents=True, exist_ok=True)
 # In notebook mode, these query local CSV files.
 # In production (pipeline/agent/), they query BigQuery.
 
-# dtype=str on camis is essential here -- without it pandas silently
-# reads this ID column as a float, and every lookup below (which
-# receives camis_id as a string) would fail to match anything. This
-# is the same bug that caused 0 labels in notebook 03 -- it applies
-# anywhere a CAMIS column gets read from CSV.
+# Data source: GT-A (labelled_complaints_ground_truth.csv, 73,450 rows)
+# Coherent with the production BiLSTM (04_food_safety_classifier.py).
+# GT-A does not have matched_camis — establishment identity is proxied
+# by incident_address. The DOHMH inspection history tool still queries
+# dohmh_inspections.csv by CAMIS (when available from the complaint),
+# falling back gracefully when the address has no matched CAMIS.
 df_dohmh = pd.read_csv(DATA_RAW / "dohmh_inspections.csv",
-                        parse_dates=["inspection_date"], dtype={"camis": str})
-df_complaints = pd.read_csv(DATA_LABELLED / "labelled_complaints.csv",
+                        parse_dates=["inspection_date"], dtype={"camis": str},
+                        low_memory=False)
+
+# Load GT-A as the complaint corpus for agent tools
+df_complaints = pd.read_csv(DATA_LABELLED / "labelled_complaints_ground_truth.csv",
                              parse_dates=["created_date"],
-                             dtype={"matched_camis": str})
+                             low_memory=False)
+
+# Build address->CAMIS lookup from GT-B (if available) so get_inspection_history
+# can still resolve inspection records for cases where CAMIS is known.
+camis_lookup = {}
+gt_b_path = DATA_LABELLED / "labelled_complaints.csv"
+if gt_b_path.exists():
+    df_b = pd.read_csv(gt_b_path, dtype={"matched_camis": str}, low_memory=False)
+    if "incident_address" in df_b.columns and "matched_camis" in df_b.columns:
+        camis_lookup = (
+            df_b.dropna(subset=["matched_camis"])
+            .assign(addr_key=df_b["incident_address"].str.strip().str.upper())
+            .drop_duplicates("addr_key")
+            .set_index("addr_key")["matched_camis"]
+            .to_dict()
+        )
 
 def get_inspection_history(camis_id: str) -> dict:
     camis_id = str(camis_id).strip()
@@ -43,17 +62,22 @@ def get_inspection_history(camis_id: str) -> dict:
         "recent_3_inspections": rows.head(3)[["inspection_date","critical_flag","grade"]].to_dict("records")
     }
 
-def get_recent_complaints(camis_id: str, days: int = 30) -> dict:
-    camis_id = str(camis_id).strip()
+def get_recent_complaints(address: str, days: int = 30) -> dict:
+    """Retrieve recent complaints for a given establishment address (GT-A proxy for CAMIS)."""
+    address = str(address).strip().upper()
     cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
-    rows = df_complaints[
-        (df_complaints.get("matched_camis","").astype(str) == camis_id) &
-        (df_complaints["created_date"] >= cutoff)
-    ]
+    if "incident_address" in df_complaints.columns:
+        rows = df_complaints[
+            (df_complaints["incident_address"].str.strip().str.upper() == address) &
+            (df_complaints["created_date"] >= cutoff)
+        ]
+    else:
+        rows = pd.DataFrame()
+    label_col = "priority_label" if "priority_label" in df_complaints.columns else "label"
     return {
         "complaint_count": len(rows),
-        "severe_predicted": int((rows.get("label",pd.Series())==1).sum()),
-        "complaint_texts": rows["descriptor"].head(3).tolist()
+        "actionable_predicted": int((rows[label_col] == 1).sum()) if label_col in rows.columns and len(rows) > 0 else 0,
+        "complaint_texts": rows["descriptor"].head(3).tolist() if len(rows) > 0 else []
     }
 
 def get_cluster_context(camis_id: str) -> dict:
@@ -104,8 +128,8 @@ from pipeline.routing.rule_based_triage import rule_based_triage
 SYSTEM_PROMPT = f"""You are an AI assistant supporting regulators like Health and Safety Officers and Restaurant Inspectors.
 You investigate food safety complaints using 5 tools:
 - get_inspection_history(camis_id): past DOHMH inspections for a restaurant
-- get_recent_complaints(camis_id, days): recent complaints about this restaurant
-- get_cluster_context(camis_id): checks if restaurant is in an outbreak cluster
+- get_recent_complaints(address, days): recent complaints about this restaurant (use incident_address)
+- get_cluster_context(camis_id): checks if restaurant is in an active outbreak pattern
 - get_related_incidents(complaint_type, lat, lng, days): similar nearby incidents
 - write_triage_report(evidence): produces your final structured recommendation
 
@@ -133,13 +157,13 @@ try:
         return json.dumps(get_inspection_history(camis_id))
 
     @tool
-    def tool_get_recent_complaints(camis_id: str, days: int = 30) -> str:
-        """Get all recent complaints about a restaurant."""
-        return json.dumps(get_recent_complaints(camis_id, days))
+    def tool_get_recent_complaints(address: str, days: int = 30) -> str:
+        """Get all recent complaints about a restaurant using its street address."""
+        return json.dumps(get_recent_complaints(address, days))
 
     @tool
     def tool_get_cluster_context(camis_id: str) -> str:
-        """Check if restaurant belongs to an active HDBSCAN outbreak cluster."""
+        """Check if restaurant belongs to an active HDBSCAN spatiotemporal pattern."""
         return json.dumps(get_cluster_context(camis_id))
 
     @tool
