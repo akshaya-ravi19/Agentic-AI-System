@@ -24,8 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 st.set_page_config(
-    page_title="NYC Food Safety Intelligence Dashboard",
-    page_icon="🍽️",
+    page_title="Food Safety Intelligence Dashboard",
     layout="wide",
     initial_sidebar_state="expanded",
 )

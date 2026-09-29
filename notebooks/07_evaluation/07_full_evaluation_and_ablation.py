@@ -53,6 +53,26 @@ if agent_eval_ran:
     print(classification_report(expert_num, rule_num,
           target_names=[TRIAGE_LOG, TRIAGE_REVIEW, TRIAGE_ESCALATE]))
 
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from sklearn.metrics import confusion_matrix
+
+    cm_agent = confusion_matrix(expert_num, agent_num, labels=[0, 1, 2])
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm_agent, annot=True, fmt="d", cmap="YlGnBu", 
+                xticklabels=[TRIAGE_LOG, TRIAGE_REVIEW, TRIAGE_ESCALATE], 
+                yticklabels=[TRIAGE_LOG, TRIAGE_REVIEW, TRIAGE_ESCALATE])
+    plt.title("Agent vs Expert Triage Decisions")
+    plt.ylabel("Expert Label (Ground Truth)")
+    plt.xlabel("Agent Prediction")
+    plt.tight_layout()
+    cm_agent_path = EVAL_DIR / "agent" / "agent_confusion_matrix.png"
+    plt.savefig(cm_agent_path, dpi=150)
+    plt.close()
+    print(f"Saved Agent confusion matrix to {cm_agent_path}")
+
     if "hallucination_count" in df_agent.columns:
         hall_rate = df_agent["hallucination_count"].sum() / len(df_agent)
         print(f"\nHallucination rate: {hall_rate:.2f} per case")

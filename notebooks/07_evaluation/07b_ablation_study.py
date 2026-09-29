@@ -98,6 +98,27 @@ ablation_rows.append({
 
 df_abl = pd.DataFrame(ablation_rows)
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+plt.figure(figsize=(10, 6))
+# Sort values so the full pipeline is at the end or maintain order
+plt.plot(df_abl["version"].str[:2], df_abl["kappa"], marker='o', linestyle='-', linewidth=2, color='coral', markersize=8)
+plt.title("Ablation Study: Impact of Components on Agent Kappa")
+plt.ylabel("Cohen's Kappa")
+plt.xlabel("Pipeline Version (D = Full Pipeline)")
+plt.ylim(0, 1.0)
+plt.grid(True, linestyle='--', alpha=0.6)
+for i, row in df_abl.iterrows():
+    plt.text(i, row["kappa"] + 0.03, f"{row['kappa']:.4f}", ha='center')
+plt.tight_layout()
+ablation_plot_path = EVAL_DIR / "ablation_line_graph.png"
+plt.savefig(ablation_plot_path, dpi=150)
+plt.close()
+print(f"Saved Ablation line graph to {ablation_plot_path}")
+
 print("\n" + "=" * 65)
 print("ABLATION STUDY RESULTS")
 print("=" * 65)

@@ -188,3 +188,21 @@ except Exception as _e:
 best = df_res.loc[df_res["pr_auc"].idxmax(), "model"]
 print(f"\nBest model by PR-AUC (balances recall + precision): {best}")
 print("(severe_recall alone is not a safe selection criterion -- see comment above)")
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10, 6))
+plt.plot(df_res["model"], df_res["pr_auc"], marker='o', linestyle='-', linewidth=2, label='PR-AUC')
+plt.plot(df_res["model"], df_res["severe_recall"], marker='s', linestyle='--', linewidth=2, label='Severe Recall')
+plt.title('BiLSTM Model Performances Comparison (GT-B)')
+plt.xticks(rotation=15, ha='right')
+plt.ylabel('Score')
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.legend()
+plt.tight_layout()
+line_graph_path = EVAL_DIR / "classifier" / "model_comparison_line_graph.png"
+plt.savefig(line_graph_path, dpi=150)
+plt.close()
+print(f"Saved model comparison line graph to {line_graph_path}")

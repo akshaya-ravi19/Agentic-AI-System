@@ -4,7 +4,7 @@ notebooks/03_labelling/03_food_safety_ground_truth.py
 Food Safety Complaint Prioritization Ground Truth
 
 Constructs a 3-tier municipal hazard prioritization ground truth based on NYC DOHMH
-food establishment violations and complaint taxonomy (independent of CDC/FDA labels):
+food establishment violations and complaint taxonomy:
 
 - Tier 2 (Critical Hazard): Acute pathogen transmission, vermin infestation, temperature abuse, sewage
 - Tier 1 (Moderate Hazard): Food contamination, worker hygiene, spoiled food, unsanitary prep area

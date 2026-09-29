@@ -24,7 +24,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import classification_report, precision_recall_curve, auc, roc_auc_score
+from sklearn.metrics import classification_report, precision_recall_curve, auc, roc_auc_score, confusion_matrix, PrecisionRecallDisplay
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sentence_transformers import SentenceTransformer
 import tensorflow as tf
 from tensorflow import keras
@@ -138,6 +142,33 @@ roc_auc = roc_auc_score(oof_trues, oof_probs)
 
 print(f"PR-AUC:   {pr_auc:.4f}")
 print(f"ROC-AUC:  {roc_auc:.4f}")
+
+# Generate and save Visualizations for the report
+out_eval = ROOT / "evaluation" / "classifier"
+out_eval.mkdir(parents=True, exist_ok=True)
+
+# 1. Confusion Matrix
+cm = confusion_matrix(oof_trues, oof_preds)
+plt.figure(figsize=(6,5))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=["Routine (0)", "Actionable (1)"], yticklabels=["Routine (0)", "Actionable (1)"])
+plt.title("Production BiLSTM Confusion Matrix (OOF)")
+plt.ylabel("True Label (Ground Truth)")
+plt.xlabel("Predicted Label")
+plt.tight_layout()
+cm_path = out_eval / "production_bilstm_confusion_matrix.png"
+plt.savefig(cm_path, dpi=150)
+plt.close()
+
+# 2. PR Curve
+plt.figure(figsize=(7,5))
+disp = PrecisionRecallDisplay(precision=prec, recall=rec, average_precision=pr_auc, estimator_name="BiLSTM")
+disp.plot(ax=plt.gca(), color='darkorange', linewidth=2)
+plt.title("Production BiLSTM Precision-Recall Curve")
+plt.tight_layout()
+pr_path = out_eval / "production_bilstm_pr_curve.png"
+plt.savefig(pr_path, dpi=150)
+plt.close()
+print(f"Saved visuals to:\n - {cm_path}\n - {pr_path}")
 
 # Train final production model on full category-disjoint template corpus and save
 print("\nTraining final production model on full complaint taxonomy corpus...")

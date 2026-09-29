@@ -1,6 +1,5 @@
 # ============================================================
-# FoodGuard — Central Configuration
-# All constants in one place. Change here, propagates everywhere.
+# Central Configuration
 # ============================================================
 from pathlib import Path
 
