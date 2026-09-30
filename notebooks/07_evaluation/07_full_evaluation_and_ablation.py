@@ -101,23 +101,6 @@ if cluster_path.exists():
 else:
     print("Run notebook 06 first.")
 
-# ── 4. Ablation study template ────────────────────────────────
-print("\n--- ABLATION STUDY ---")
-print("""
-For each pipeline version, run triage on same 50 eval cases,
-compute Cohen's Kappa vs expert labels:
-
-  Version A: No BiLSTM — all complaints enter agent directly
-             (set bilstm_pred=1 for all, measure routing accuracy)
-  Version B: No cluster context tool
-             (disable get_cluster_context in agent tools)
-  Version C: No inspection history tool
-             (disable get_inspection_history in agent tools)
-  Version D: Full pipeline — all components
-
-Expected result: removing any core component degrades Kappa.
-If it does not: discuss whether that component is necessary.
-""")
 
 # ── 5. Fairness / bias audit ────────────────────────────────────
 # Checks whether the classifier behaves consistently across

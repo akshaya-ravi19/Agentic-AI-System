@@ -1,13 +1,11 @@
 """
-NYC Food Safety Complaint Intelligence Dashboard
+Food Safety Complaint Intelligence Dashboard
 ================================================
-An interactive EDA dashboard built with Streamlit and Plotly.
-Uses the full GT-A dataset (labelled_complaints_ground_truth.csv, 73,450 records)
-and the raw DOHMH inspections dataset for a comprehensive view of food safety
+An interactive Dashboard was built with Streamlit and Plotly.
+Uses the 311 labelled complaints and the raw DOHMH inspections dataset for a comprehensive view of food safety
 complaints across New York City.
 
-Run locally:
-    streamlit run dashboard.py
+Note: The Dashboard was developed solely for presentation purposes. 
 """
 
 import streamlit as st
@@ -155,16 +153,15 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 Temporal Trends",
-    "🗺️ Geographic Distribution",
-    "🏷️ Complaint Analysis",
-    "⚠️ Hazard Profile",
-    "🔬 Inspection Data"
+    "Temporal Trends",
+    "Geographic Distribution",
+    "Complaint Analysis",
+    "Hazard Profile",
+    "Inspection Data"
 ])
 
-# ═══════════════════════════════════════════════════════════
 # TAB 1 — Temporal Trends
-# ═══════════════════════════════════════════════════════════
+
 with tab1:
     st.markdown('<div class="section-header">Complaint Volume Over Time</div>', unsafe_allow_html=True)
 
@@ -253,9 +250,9 @@ with tab1:
         )
         st.plotly_chart(fig_heat, use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════
+
 # TAB 2 — Geographic Distribution
-# ═══════════════════════════════════════════════════════════
+
 with tab2:
     st.markdown('<div class="section-header">Spatial Distribution of Complaints</div>', unsafe_allow_html=True)
 
@@ -323,9 +320,9 @@ with tab2:
         )
         st.plotly_chart(fig_bt, use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════
+
 # TAB 3 — Complaint Analysis
-# ═══════════════════════════════════════════════════════════
+
 with tab3:
     st.markdown('<div class="section-header">Top Complaint Types</div>', unsafe_allow_html=True)
 
@@ -389,9 +386,8 @@ with tab3:
     )
     st.plotly_chart(fig_cross, use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════
 # TAB 4 — Hazard Profile
-# ═══════════════════════════════════════════════════════════
+
 with tab4:
     st.markdown('<div class="section-header">Ground Truth Label Distribution</div>', unsafe_allow_html=True)
 
