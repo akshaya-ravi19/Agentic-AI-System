@@ -586,11 +586,11 @@ def investigate(req: InvestigateRequest):
     else:
         # Default baseline for unregistered/general complaints
         evidence_data["inspections"] = {
-            "most_recent_grade": "Grade A (DOHMH Baseline)",
-            "last_action": "Standard Municipal Compliance Monitoring",
-            "inspections": [{"date": "Recent", "grade": "Grade A"}]
+            "most_recent_grade": "Unknown (Unregistered Establishment)",
+            "last_action": "No prior regulatory records found",
+            "inspections": []
         }
-        evidence_data["recent_complaints"] = {"count": 1, "recent_complaints": []}
+        evidence_data["recent_complaints"] = {"count": 0, "recent_complaints": []}
         evidence_data["pattern"] = get_pattern_signal(
             None,
             location=req.location or "",
@@ -1607,17 +1607,17 @@ def index():
                     document.getElementById('inspectorEstablishment').innerText =
                         (data.restaurant_name || 'Unspecified') + (data.location ? ', ' + data.location : '');
                     document.getElementById('inspectorCategory').innerText = data.category || 'General Food Safety Complaint';
-                    document.getElementById('inspectorComplaint').innerText = data.triage_level ? (data.complaint_ref ? data.reasoning ? '' : '-' : '-') : '-';
+                    document.getElementById('inspectorComplaint').innerText = document.getElementById('complaintText').value.trim() || 'No description provided.';
 
                     const ev = data.evidence || {};
                     const insp = ev.inspections || {};
                     const pattern = ev.pattern || {};
                     const recent = ev.recent_complaints || {};
 
-                    document.getElementById('inspectorGrade').innerText = insp.most_recent_grade || 'Grade A (DOHMH Baseline)';
-                    document.getElementById('inspectorLastAction').innerText = insp.last_action || 'Standard Municipal Compliance Monitoring';
+                    document.getElementById('inspectorGrade').innerText = insp.most_recent_grade || 'Unknown (Unregistered Establishment)';
+                    document.getElementById('inspectorLastAction').innerText = insp.last_action || 'No prior regulatory records found';
                     document.getElementById('inspectorInspCount').innerText =
-                        insp.inspections ? insp.inspections.length + ' records retrieved' : '1 record retrieved';
+                        insp.inspections ? insp.inspections.length + ' records retrieved' : '0 records retrieved';
 
                     const clusterEl = document.getElementById('inspectorClusterStatus');
                     if (pattern.signal_strength === 'confirmed') {
