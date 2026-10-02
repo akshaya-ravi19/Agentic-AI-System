@@ -171,7 +171,7 @@ if labelled_path.exists() and clf_path.exists():
             print("  Loading production BiLSTM and embeddings...")
             bilstm_model = tf.keras.models.load_model(str(model_path))
             X_all = np.load(str(embeddings_path))  # shape: (N, 384)
-            X_seq = X_all.reshape(-1, 1, 384)      # → (N, 1, 384)
+            X_seq = X_all.reshape(-1, 1, 384)      # -> (N, 1, 384)
 
             rng = np.random.default_rng(42)
             background_idx = rng.choice(len(X_seq), size=min(100, len(X_seq)), replace=False)
@@ -183,8 +183,8 @@ if labelled_path.exists() and clf_path.exists():
             explainer = shap.GradientExplainer(bilstm_model, X_background)
             shap_values = explainer.shap_values(X_explain)
 
-            sv = np.array(shap_values).squeeze()  # → (N, 384)
-            X_exp_2d = X_explain.squeeze(axis=1)  # → (N, 384)
+            sv = np.array(shap_values).squeeze()  # -> (N, 384)
+            X_exp_2d = X_explain.squeeze(axis=1)  # -> (N, 384)
 
             mean_abs_shap = np.abs(sv).mean(axis=0)
             top_k = 20
@@ -204,7 +204,7 @@ if labelled_path.exists() and clf_path.exists():
             shap_bar_path = EVAL_DIR / "classifier" / "bilstm_shap_top_dims.png"
             plt.savefig(shap_bar_path, dpi=150)
             plt.close()
-            print(f"  Saved SHAP bar chart → {shap_bar_path}")
+            print(f"  Saved SHAP bar chart -> {shap_bar_path}")
 
             # Beeswarm summary plot
             plt.figure(figsize=(10, 7))
@@ -221,7 +221,7 @@ if labelled_path.exists() and clf_path.exists():
             shap_summary_path = EVAL_DIR / "classifier" / "bilstm_shap_summary.png"
             plt.savefig(shap_summary_path, dpi=150, bbox_inches="tight")
             plt.close()
-            print(f"  Saved SHAP summary plot → {shap_summary_path}")
+            print(f"  Saved SHAP summary plot -> {shap_summary_path}")
             print("\n  Top 5 most influential embedding dimensions by mean |SHAP|:")
             for rank, dim in enumerate(top_dims[:5], 1):
                 print(f"    #{rank}: Dim {dim:>3d}  (mean |SHAP| = {mean_abs_shap[dim]:.5f})")
@@ -262,7 +262,7 @@ if labelled_path.exists() and clf_path.exists():
                 fair_bar_path = EVAL_DIR / "classifier" / "fairness_selection_rate_borough.png"
                 plt.savefig(fair_bar_path, dpi=150)
                 plt.close()
-                print(f"  Saved fairness bar chart → {fair_bar_path}")
+                print(f"  Saved fairness bar chart -> {fair_bar_path}")
         else:
             print("  test_predictions.csv not found. Run notebook 04 first.")
     except Exception as e:
