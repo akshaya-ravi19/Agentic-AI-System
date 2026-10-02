@@ -8,15 +8,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from config.config import *
 
-print("=" * 60)
+
 print("AGENTIC AI FULL EVALUATION")
-print("=" * 60)
 
 # ── 1. Classifier comparison ──────────────────────────────────
 clf_path = EVAL_DIR / "classifier" / "comparison.csv"
 if clf_path.exists():
     df_clf = pd.read_csv(clf_path)
-    print("\n--- CLASSIFIER COMPARISON ---")
+    print("\nCLASSIFIER COMPARISON")
     print(df_clf.to_string(index=False))
     best = df_clf.loc[df_clf["pr_auc"].idxmax(), "model"]
     print(f"\nBest model (PR-AUC, consistent with notebook 04's selection logic): {best}")
@@ -27,7 +26,7 @@ else:
 agent_path = EVAL_DIR / "agent" / "agent_results.csv"
 expert_path = EVAL_DIR / "agent" / "expert_labelled_50_cases.csv"
 agent_eval_ran = agent_path.exists() and expert_path.exists()
-print("\n--- AGENT EVALUATION ---")
+print("\nAGENT EVALUATION")
 if agent_eval_ran:
     df_agent  = pd.read_csv(agent_path)
     df_expert = pd.read_csv(expert_path)
@@ -92,7 +91,7 @@ else:
 
 # ── 3. Clustering validation ──────────────────────────────────
 cluster_path = EVAL_DIR / "clustering" / "cluster_results.csv"
-print("\n--- CLUSTERING VALIDATION ---")
+print("\nCLUSTERING VALIDATION")
 if cluster_path.exists():
     df_cl = pd.read_csv(cluster_path)
     print(f"Clusters: {df_cl['cluster_id'].nunique()-1}")
@@ -110,7 +109,7 @@ else:
 # skew toward certain boroughs or cuisines independent of actual
 # risk, that's a real equity problem for a tool influencing which
 # restaurants get inspected.
-print("\n--- FAIRNESS / BIAS AUDIT ---")
+print("\nFAIRNESS/BIAS AUDIT")
 labelled_path = DATA_LABELLED / "labelled_complaints_ground_truth.csv"
 if labelled_path.exists() and clf_path.exists():
     df_fair = pd.read_csv(labelled_path, low_memory=False)
@@ -148,49 +147,132 @@ if labelled_path.exists() and clf_path.exists():
         print("  predictions with borough/cuisine_description columns attached")
         print("  before this audit can run. See CHANGES_APPLIED.md for the change needed.")
 
-    # SHAP on the Logistic Regression baseline only -- it's the one
-    # model here with a directly interpretable linear structure, so
-    # it gives the most legible "which features drove this decision"
-    # story for a dissertation without needing a BiLSTM-specific
-    # explainer (e.g. DeepSHAP) that adds real complexity for
-    # marginal extra insight at this project's scope.
+    # ── BiLSTM SHAP Explainability (GradientExplainer) ───────────────────────
+    # We explain the PRODUCTION BiLSTM (bilstm_food_safety.keras) rather than
+    # the Logistic Regression baseline, because the BiLSTM is the actual
+    # deployed model. shap.GradientExplainer works directly with TF/Keras and
+    # computes expected gradients as SHAP values across embedding dimensions.
+    print("\n--- BILSTM SHAP EXPLAINABILITY ---")
     try:
         import shap
-        print("\nSHAP is installed -- run notebook 04's Logistic Regression model")
-        print("through shap.LinearExplainer(lr, X_train) and shap.summary_plot()")
-        print("to get feature-importance figures for your fairness discussion.")
-    except ImportError:
-        print("\n  shap not installed. Run: pip install shap")
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import tensorflow as tf
+
+        model_path = MODELS_DIR / "bilstm" / "bilstm_food_safety.keras"
+        embeddings_path = DATA_PROCESSED / "embeddings.npy"
+
+        if not model_path.exists():
+            print("  [skip] bilstm_food_safety.keras not found. Run notebook 04 first.")
+        elif not embeddings_path.exists():
+            print("  [skip] embeddings.npy not found. Run notebook 04 first.")
+        else:
+            print("  Loading production BiLSTM and embeddings...")
+            bilstm_model = tf.keras.models.load_model(str(model_path))
+            X_all = np.load(str(embeddings_path))  # shape: (N, 384)
+            X_seq = X_all.reshape(-1, 1, 384)      # → (N, 1, 384)
+
+            rng = np.random.default_rng(42)
+            background_idx = rng.choice(len(X_seq), size=min(100, len(X_seq)), replace=False)
+            X_background = X_seq[background_idx]
+            explain_idx = rng.choice(len(X_seq), size=min(50, len(X_seq)), replace=False)
+            X_explain = X_seq[explain_idx]
+
+            print("  Running SHAP GradientExplainer on BiLSTM (this may take ~1 min)...")
+            explainer = shap.GradientExplainer(bilstm_model, X_background)
+            shap_values = explainer.shap_values(X_explain)
+
+            sv = np.array(shap_values).squeeze()  # → (N, 384)
+            X_exp_2d = X_explain.squeeze(axis=1)  # → (N, 384)
+
+            mean_abs_shap = np.abs(sv).mean(axis=0)
+            top_k = 20
+            top_dims = np.argsort(mean_abs_shap)[::-1][:top_k]
+
+            # Bar chart: top 20 embedding dimensions by mean |SHAP|
+            plt.figure(figsize=(10, 6))
+            plt.barh(
+                [f"Dim {d}" for d in top_dims[::-1]],
+                mean_abs_shap[top_dims[::-1]],
+                color="steelblue"
+            )
+            plt.xlabel("Mean |SHAP Value|")
+            plt.title(f"Production BiLSTM — Top {top_k} Most Influential Embedding Dimensions\n"
+                      "(Higher = Stronger influence on Actionable Hazard prediction)")
+            plt.tight_layout()
+            shap_bar_path = EVAL_DIR / "classifier" / "bilstm_shap_top_dims.png"
+            plt.savefig(shap_bar_path, dpi=150)
+            plt.close()
+            print(f"  Saved SHAP bar chart → {shap_bar_path}")
+
+            # Beeswarm summary plot
+            plt.figure(figsize=(10, 7))
+            shap.summary_plot(
+                sv[:, top_dims],
+                X_exp_2d[:, top_dims],
+                feature_names=[f"Dim {d}" for d in top_dims],
+                show=False,
+                plot_type="dot",
+                max_display=top_k
+            )
+            plt.title("BiLSTM SHAP Summary Plot (Beeswarm) — Top 20 Embedding Dimensions")
+            plt.tight_layout()
+            shap_summary_path = EVAL_DIR / "classifier" / "bilstm_shap_summary.png"
+            plt.savefig(shap_summary_path, dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"  Saved SHAP summary plot → {shap_summary_path}")
+            print("\n  Top 5 most influential embedding dimensions by mean |SHAP|:")
+            for rank, dim in enumerate(top_dims[:5], 1):
+                print(f"    #{rank}: Dim {dim:>3d}  (mean |SHAP| = {mean_abs_shap[dim]:.5f})")
+
+    except ImportError as e:
+        print(f"  SHAP not available: {e}. Run: pip install shap")
+    except Exception as e:
+        print(f"  SHAP analysis failed: {e}")
+
+    # ── Fairness bar chart (selection rate by borough) ───────────────────────
+    print("\n--- FAIRNESS VISUALISATIONS ---")
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        pred_path_fair = EVAL_DIR / "classifier" / "test_predictions.csv"
+        if pred_path_fair.exists():
+            df_pred_fair = pd.read_csv(pred_path_fair)
+            if "borough" in df_pred_fair.columns:
+                boro_sr = (
+                    df_pred_fair.groupby("borough")
+                    .apply(lambda g: g["y_pred"].mean())
+                    .reset_index(name="selection_rate")
+                    .sort_values("selection_rate", ascending=True)
+                )
+                overall_mean = df_pred_fair["y_pred"].mean()
+                colours = ["#ef5350" if v > overall_mean else "#42a5f5"
+                           for v in boro_sr["selection_rate"]]
+                plt.figure(figsize=(8, 5))
+                plt.barh(boro_sr["borough"], boro_sr["selection_rate"] * 100, color=colours)
+                plt.axvline(overall_mean * 100, color="orange", linestyle="--",
+                            linewidth=1.5, label=f"Overall mean ({overall_mean*100:.1f}%)")
+                plt.xlabel("Selection Rate (%)")
+                plt.title("Classifier Selection Rate by Borough\n"
+                          "(% of complaints flagged as Actionable Hazard)")
+                plt.legend()
+                plt.tight_layout()
+                fair_bar_path = EVAL_DIR / "classifier" / "fairness_selection_rate_borough.png"
+                plt.savefig(fair_bar_path, dpi=150)
+                plt.close()
+                print(f"  Saved fairness bar chart → {fair_bar_path}")
+        else:
+            print("  test_predictions.csv not found. Run notebook 04 first.")
+    except Exception as e:
+        print(f"  Fairness chart error: {e}")
+
 else:
     print("Run notebooks 03 and 04 first.")
 
-# ── 6. User evaluation questionnaire ────────────────────────────
-print("\n--- USER EVALUATION QUESTIONNAIRE ---")
-questionnaire_path = EVAL_DIR / "user_questionnaire.csv"
-if not questionnaire_path.exists():
-    questions = pd.DataFrame([
-        {"id": "Q1", "dimension": "Trust", "question": "I trust the triage tier the system recommended.", "scale": "1-5 Likert"},
-        {"id": "Q2", "dimension": "Trust", "question": "The evidence shown was sufficient to understand why this tier was chosen.", "scale": "1-5 Likert"},
-        {"id": "Q3", "dimension": "Usability", "question": "The recommendation was easy to understand.", "scale": "1-5 Likert"},
-        {"id": "Q4", "dimension": "Usability", "question": "I could quickly find the information I needed to make my own decision.", "scale": "1-5 Likert"},
-        {"id": "Q5", "dimension": "Perceived accuracy", "question": "Based on my own judgement, this recommendation matched what I would have decided.", "scale": "1-5 Likert"},
-        {"id": "Q6", "dimension": "Workload", "question": "Using this tool would reduce my workload compared to reviewing complaints manually.", "scale": "1-5 Likert"},
-        {"id": "Q7", "dimension": "Autonomy", "question": "The tool made it clear that the final decision is mine to make.", "scale": "1-5 Likert"},
-        {"id": "Q8", "dimension": "Overall", "question": "I would want to use this tool in my actual work.", "scale": "1-5 Likert"},
-        {"id": "Q9", "dimension": "Open-ended", "question": "What, if anything, would make you distrust a recommendation from this system?", "scale": "free text"},
-        {"id": "Q10", "dimension": "Open-ended", "question": "What information is missing that would help you make a faster or more confident decision?", "scale": "free text"},
-    ])
-    questions.to_csv(questionnaire_path, index=False)
-    print(f"Saved a starter questionnaire template -> {questionnaire_path}")
-    print("Administer this to inspectors/EHOs reviewing a sample of agent")
-    print("recommendations (ideally the same 50 cases used for Kappa evaluation),")
-    print("then analyse Likert responses descriptively and open-ended responses")
-    print("thematically for your user evaluation chapter.")
-else:
-    print(f"Questionnaire template already exists at {questionnaire_path}")
-
-# ── 7. Save final results table ───────────────────────────────
-print("\n--- SAVING DISSERTATION TABLES ---")
+# Final results table
+print("\nDISSERTATION TABLE")
 summary = {
     "classifier_best_severe_recall": df_clf["severe_recall"].max() if clf_path.exists() else "TBD",
     "classifier_best_pr_auc":        df_clf["pr_auc"].max() if clf_path.exists() else "TBD",
