@@ -33,7 +33,7 @@ Core libraries (already in requirements.txt): NLTK, spaCy,
 sentence-transformers, imbalanced-learn (SMOTE), hdbscan, langgraph,
 langchain, google-cloud-bigquery.
 
-## Deploying pipeline/ to GCP (after evaluation is solid)
+## Deploying pipeline/ to GCP 
 
 Five deployable pieces, each with its own Dockerfile:
 - `pipeline/ingestion/` — Cloud Run JOBS, scheduled (311 every 15 min,
