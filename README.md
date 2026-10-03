@@ -4,15 +4,15 @@
 ## What this project does
 1. Classifies NYC 311 food safety complaints as severe / non-severe (BiLSTM)
 2. Retrieves evidence from DOHMH inspection records (LangGraph agent tools)
-3. Detects spatiotemporal outbreak patterns (HDBSCAN — 5 dimensions)
-4. Produces structured triage recommendations for Environmental Health Officers
+3. Detects spatiotemporal outbreak patterns
+4. Produces structured triage recommendations for Health Inspectors
 
 The agent RECOMMENDS. Humans make all final regulatory decisions.
 
 ## Environment setup
 
 
-**VS Code + local venv (used for most of this project):**
+**VS Code + local venv:**
 ```
 python -m venv venv
 venv\Scripts\activate        (Windows)  /  source venv/bin/activate (Mac/Linux)
