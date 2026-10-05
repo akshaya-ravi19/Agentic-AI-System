@@ -1,25 +1,6 @@
 # Agentic AI Food Safety Triage System
 
-> **MSc Dissertation — Data Science & Artificial Intelligence**  
 > An end-to-end agentic AI pipeline that classifies, clusters, and triages NYC food safety complaints to support Environmental Health Officers in prioritising inspection resources.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [System Architecture](#system-architecture)
-- [Key Results](#key-results)
-- [Repository Structure](#repository-structure)
-- [Environment Setup](#environment-setup)
-- [Notebook Execution Order](#notebook-execution-order)
-- [GCP Deployment](#gcp-deployment)
-- [Live Prototype](#live-prototype)
-- [Datasets](#datasets)
-- [Ethical Considerations](#ethical-considerations)
-- [Citation](#citation)
-
----
 
 ## Overview
 
@@ -129,7 +110,7 @@ food_safety_triage_project/
 
 ## Environment Setup
 
-### Option A — Local Virtual Environment (Recommended)
+Local Virtual Environment 
 
 ```bash
 python -m venv .venv
@@ -142,15 +123,6 @@ source .venv/bin/activate
 
 pip install -r requirements_unified.txt
 python -m spacy download en_core_web_sm
-```
-
-### Option B — Google Colab
-
-Upload the repository to Google Drive, mount it, and run:
-
-```python
-!pip install -r requirements_unified.txt
-!python -m spacy download en_core_web_sm
 ```
 
 > Colab Pro is recommended for Notebook 04 (BiLSTM training) if GPU access is required.
@@ -171,10 +143,6 @@ gcloud services enable \
     cloudbuild.googleapis.com
 ```
 
-> New GCP accounts receive $300 in free credits. Configure a billing budget alert before deploying any Cloud Run services.
-
----
-
 ## Notebook Execution Order
 
 The notebooks must be executed in the following sequence. Each notebook saves artefacts that downstream notebooks depend on.
@@ -188,8 +156,6 @@ The notebooks must be executed in the following sequence. Each notebook saves ar
 | 5 | `notebooks/05_agent/` | Build LangGraph agent and run 50-case expert evaluation |
 | 6 | `notebooks/06_clustering/` | HDBSCAN clustering with Silhouette and Chi-square validation |
 | 7 | `notebooks/07_evaluation/` | Full evaluation, fairness audit, SHAP explainability |
-
-> **Critical Rule:** Never apply SMOTE or any data balancing technique to the validation or test set. Balance the training fold only, strictly after splitting.
 
 ---
 
@@ -205,7 +171,7 @@ The production system comprises five independently deployable components, each w
 | 4 | `pipeline/ingestion/` | Cloud Run **Job** | 311: every 15 min · DOHMH: nightly |
 | 5 | `pipeline/clustering/` | Cloud Run **Job** | Nightly |
 
-**Unified deployment (recommended):**
+**Unified deployment:**
 
 ```bash
 gcloud builds submit --config cloudbuild-unified.yaml .
@@ -238,27 +204,6 @@ The dual-portal prototype is deployed on Google Cloud Run and provides:
 | DOHMH Restaurant Inspection Results | [NYC Open Data](https://data.cityofnewyork.us/resource/43nn-pn8j.json) | Inspection grades, violation codes, CAMIS IDs |
 
 Both datasets are publicly available under the NYC Open Data Terms of Use and contain no personally identifiable information (PII).
-
----
-
-## Ethical Considerations
-
-- The system is designed exclusively as a **decision-support tool**, not an autonomous enforcement system. All triage recommendations are subject to mandatory human review before any regulatory action is taken.
-- A **geographic fairness audit** was conducted using `fairlearn`, revealing a classifier selection rate disparity of 25.1 percentage points across boroughs (Bronx: 35.7% vs. Brooklyn: 10.6%). This is discussed in full in the dissertation's fairness and bias chapter.
-- **SHAP explainability** (`shap.GradientExplainer`) is applied to the production BiLSTM to ensure model decisions are semantically grounded in complaint text, providing evidence against spurious geographic correlations.
-- No demographic data about complainants is collected or used at any stage of the pipeline.
-
----
-
-## Citation
-
-If referencing this work, please cite:
-
-```
-Ravi, A. (2026). Agentic AI for Municipal Food Safety Triage: A Multi-Component
-Decision Support System for NYC Environmental Health Officers.
-MSc Dissertation, SP Jain School of Global Management.
-```
 
 ---
 
