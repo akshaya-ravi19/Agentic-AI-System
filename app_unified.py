@@ -474,30 +474,6 @@ class InvestigateResponse(BaseModel):
     used_rule_based_fallback: bool
     need_selection: bool = False
     options: List[Dict] = []
-    lat: Optional[float] = None
-    lng: Optional[float] = None
-
-
-# ── Borough centre-point coordinates (WGS84) ─────────────────────────
-# Used to seed the Leaflet map pin when a precise address is unavailable.
-BOROUGH_COORDS = {
-    "MANHATTAN":     (40.7831, -73.9712),
-    "BROOKLYN":      (40.6782, -73.9442),
-    "QUEENS":        (40.7282, -73.7949),
-    "BRONX":         (40.8448, -73.8648),
-    "STATEN ISLAND": (40.5795, -74.1502),
-    "NEW YORK":      (40.7128, -74.0060),
-}
-
-def resolve_coordinates(location: str) -> tuple:
-    """Return (lat, lng) for a borough name or default to NYC centre."""
-    if not location:
-        return (40.7128, -74.0060)
-    key = location.strip().upper()
-    for boro, coords in BOROUGH_COORDS.items():
-        if boro in key:
-            return coords
-    return (40.7128, -74.0060)
 
 
 # ── REST API Endpoints ────────────────────────────────────────────────
@@ -751,8 +727,6 @@ def investigate(req: InvestigateRequest):
             "No immediate action required."
         )
 
-    lat, lng = resolve_coordinates(req.location or "")
-
     return InvestigateResponse(
         complaint_ref=ref_id,
         resolved_camis=resolved_camis,
@@ -772,9 +746,7 @@ def investigate(req: InvestigateRequest):
         safety_advisory=safety_advisory,
         citizen_next_steps=citizen_next_steps,
         inspector_directive=inspector_directive,
-        used_rule_based_fallback=used_fallback,
-        lat=lat,
-        lng=lng,
+        used_rule_based_fallback=used_fallback
     )
 
 
@@ -789,8 +761,6 @@ def index():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>NYC Food Safety Complaint Portal</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <style>
             :root {
                 --bg-primary: #070e1e;
@@ -1350,21 +1320,6 @@ def index():
                     </div>
                 </div>
 
-                <!-- Inspection Location Map -->
-                <div class="assessment-section" id="inspectorMapSection" style="display:none;">
-                    <div class="assessment-header">Inspection Location Map</div>
-                    <div id="inspectorMap" style="height:260px; border-radius:8px; border:1px solid #233554; background:#090d16;"></div>
-                    <small class="text-secondary d-block mt-2" style="font-size:0.78rem;">
-                        Pin indicates borough centre. Adjust precise address before dispatch.
-                    </small>
-                </div>
-
-                <!-- Dynamic Evidence List -->
-                <div class="assessment-section" id="inspectorEvidenceSection" style="display:none;">
-                    <div class="assessment-header">Complaint-Specific Evidence</div>
-                    <div id="inspectorEvidenceList" style="font-size:0.86rem; color:#94a3b8;"></div>
-                </div>
-
                 <!-- AI Reasoning & Directives -->
                 <div class="assessment-section">
                     <div class="assessment-header">AI Agent Reasoning</div>
@@ -1702,7 +1657,7 @@ def index():
                     document.getElementById('inspectorVisualFinding').innerText =
                         data.has_image ? data.visual_finding : 'N/A';
 
-                     const imgPreview = document.getElementById('inspectorImagePreviewContainer');
+                    const imgPreview = document.getElementById('inspectorImagePreviewContainer');
                     if (data.has_image && data.image_data) {
                         imgPreview.innerHTML = `<img src="${data.image_data}" alt="Submitted evidence" style="max-height:160px;border-radius:6px;border:1px solid #334155;">`;
                         document.getElementById('inspectorImageThumbRow').classList.remove('d-none');
@@ -1711,107 +1666,6 @@ def index():
                         imgPreview.innerHTML = '';
                         document.getElementById('inspectorImageThumbRow').classList.add('d-none');
                         document.getElementById('inspectorImageDetailRow').classList.add('d-none');
-                    }
-
-                    // ── Leaflet Inspection Location Map ──────────────────────────
-                    if (data.lat && data.lng) {
-                        const mapSection = document.getElementById('inspectorMapSection');
-                        mapSection.style.display = 'block';
-
-                        const lat = data.lat, lng = data.lng;
-                        const pinColor = tier === 'ESCALATE' ? '#ef4444' : tier === 'REVIEW' ? '#f59e0b' : '#22c55e';
-                        const heatRadius = tier === 'ESCALATE' ? 2500 : tier === 'REVIEW' ? 1800 : 1200;
-                        const heatOpacity = tier === 'ESCALATE' ? 0.22 : 0.12;
-
-                        // Destroy previous map instance if it exists
-                        if (window._leafletMap) {
-                            window._leafletMap.remove();
-                            window._leafletMap = null;
-                        }
-
-                        const map = L.map('inspectorMap', { zoomControl: true }).setView([lat, lng], 14);
-                        window._leafletMap = map;
-
-                        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                            attribution: '&copy; OpenStreetMap &copy; CARTO',
-                            maxZoom: 19
-                        }).addTo(map);
-
-                        // Heatmap circle (risk radius)
-                        L.circle([lat, lng], {
-                            color: pinColor,
-                            fillColor: pinColor,
-                            fillOpacity: heatOpacity,
-                            radius: heatRadius,
-                            weight: 1
-                        }).addTo(map);
-
-                        // Custom SVG pin marker
-                        const svgIcon = L.divIcon({
-                            html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-                                    <path d="M14 0C6.268 0 0 6.268 0 14c0 9.917 14 22 14 22S28 23.917 28 14C28 6.268 21.732 0 14 0z" fill="${pinColor}"/>
-                                    <circle cx="14" cy="14" r="6" fill="white"/>
-                                   </svg>`,
-                            iconSize: [28, 36],
-                            iconAnchor: [14, 36],
-                            className: ''
-                        });
-
-                        const label = data.restaurant_name
-                            ? `<b>${data.restaurant_name}</b><br>${data.location || ''}`
-                            : `<b>${data.location || 'Reported Location'}</b>`;
-
-                        L.marker([lat, lng], { icon: svgIcon })
-                            .addTo(map)
-                            .bindPopup(`<div style="font-size:0.85rem;">${label}<br><span style="color:${pinColor};font-weight:600;">${tier} — Inspection Required</span></div>`)
-                            .openPopup();
-                    }
-
-                    // ── Dynamic Complaint-Specific Evidence List ─────────────────
-                    const evidenceSection = document.getElementById('inspectorEvidenceSection');
-                    const evidenceList = document.getElementById('inspectorEvidenceList');
-                    const ev = data.evidence || {};
-                    const recentComplaints = (ev.recent_complaints || {}).recent_complaints || [];
-                    const inspectionHistory = (ev.inspections || {}).inspections || [];
-
-                    let evidenceHTML = '';
-
-                    if (recentComplaints.length > 0) {
-                        evidenceHTML += `<p class="text-secondary fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;">Recent Complaints (30d)</p>`;
-                        evidenceHTML += '<ul class="list-unstyled mb-3">';
-                        recentComplaints.slice(0, 5).forEach(c => {
-                            const date = c.created_date ? new Date(c.created_date).toLocaleDateString() : '?';
-                            const desc = c.descriptor || c.complaint_type || 'Complaint logged';
-                            evidenceHTML += `<li style="border-left:2px solid #38bdf8;padding-left:8px;margin-bottom:6px;">
-                                <span style="color:#f8fafc;">${desc.substring(0, 80)}</span>
-                                <span class="d-block text-secondary" style="font-size:0.75rem;">${date} · ${c.borough || data.location || 'NYC'}</span>
-                            </li>`;
-                        });
-                        evidenceHTML += '</ul>';
-                    }
-
-                    if (inspectionHistory.length > 0) {
-                        evidenceHTML += `<p class="text-secondary fw-semibold mb-1" style="font-size:0.78rem;text-transform:uppercase;">DOHMH Inspection History</p>`;
-                        evidenceHTML += '<ul class="list-unstyled mb-2">';
-                        inspectionHistory.slice(0, 5).forEach(i => {
-                            const iDate = i.inspection_date ? new Date(i.inspection_date).toLocaleDateString() : i.date || '?';
-                            const grade = i.grade || i.action || 'N/A';
-                            const violations = i.violation_description || i.violation_code || '';
-                            const gradeColor = grade.includes('A') ? '#22c55e' : grade.includes('B') ? '#f59e0b' : '#ef4444';
-                            evidenceHTML += `<li style="border-left:2px solid ${gradeColor};padding-left:8px;margin-bottom:6px;">
-                                <span style="color:${gradeColor};font-weight:600;">Grade: ${grade}</span>
-                                <span class="d-block text-secondary" style="font-size:0.75rem;">${iDate}${violations ? ' · ' + violations.substring(0, 60) : ''}</span>
-                            </li>`;
-                        });
-                        evidenceHTML += '</ul>';
-                    }
-
-                    if (evidenceHTML) {
-                        evidenceSection.style.display = 'block';
-                        evidenceList.innerHTML = evidenceHTML;
-                    } else {
-                        evidenceSection.style.display = 'none';
-                        evidenceList.innerHTML = '';
                     }
                 }
             }
